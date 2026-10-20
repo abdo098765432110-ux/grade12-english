@@ -6,6 +6,38 @@
   <title>Grade 12 English</title>
   <meta name="description" content="Free English grammar lessons, summaries, practice questions and reading comprehension for Egyptian Grade 12 students.">
   <link rel="icon" href="data:,">
+  <script>
+    /* Fallback: if a CSS or JavaScript file cannot be loaded (for example,
+       because a folder was not uploaded to GitHub), show a clear message
+       instead of an unstyled page that keeps saying "Loading…".
+       This must stay inline: an external file could be missing too. */
+    (function () {
+      var failed = [];
+      window.addEventListener('error', function (event) {
+        var node = event.target;
+        if (node && (node.tagName === 'LINK' || node.tagName === 'SCRIPT')) {
+          failed.push({ file: node.getAttribute('href') || node.getAttribute('src'), script: node.tagName === 'SCRIPT' });
+        }
+      }, true);
+      window.addEventListener('load', function () {
+        if (!failed.length) return;
+        var box = document.createElement('div');
+        box.id = 'load-failure';
+        box.setAttribute('role', 'alert');
+        box.style.cssText = 'margin:1rem 0;padding:1rem;border:2px solid #a8261b;border-radius:8px;background:#fbeceb;color:#1d2733;font:1rem/1.5 system-ui,sans-serif';
+        box.textContent = 'Part of this page could not be loaded (' + failed.map(function (f) { return f.file; }).join(', ') +
+          '). Please reload the page. If you manage this website, check that the css, js and data folders are uploaded to the GitHub repository.';
+        var main = document.getElementById('main');
+        if (main) main.insertBefore(box, main.firstChild);
+        if (failed.some(function (f) { return f.script; })) {
+          [].forEach.call(document.querySelectorAll('.loading, [data-count]'), function (node) {
+            node.classList.remove('loading');
+            node.textContent = 'This content could not be loaded.';
+          });
+        }
+      });
+    })();
+  </script>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -14,13 +46,16 @@
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="index.html">Grade 12 English <span>Free practice for Egyptian secondary students</span></a>
-      <nav aria-label="Main">
+      <button type="button" class="nav-toggle" aria-expanded="false" aria-controls="site-nav" hidden>
+        <span class="nav-toggle-icon" aria-hidden="true"></span>Menu
+      </button>
+      <nav id="site-nav" class="site-nav" aria-label="Main">
         <ul class="nav-list">
           <li><a href="index.html" aria-current="page">Home</a></li>
           <li><a href="grammar.html">Grammar Lessons</a></li>
-          <li><a href="summaries.html">Summaries</a></li>
-          <li><a href="practice.html">Practice</a></li>
-          <li><a href="reading.html">Reading</a></li>
+          <li><a href="summaries.html">Grammar Summaries</a></li>
+          <li><a href="practice.html">Grammar Practice</a></li>
+          <li><a href="reading.html">Reading Comprehension</a></li>
         </ul>
       </nav>
     </div>
@@ -30,31 +65,33 @@
     <h1>Free English practice for Grade 12</h1>
     <p class="lead">Grammar lessons, quick revision summaries, practice questions with instant feedback, and reading comprehension — free, with no account needed.</p>
 
-    <div id="home-status"></div>
+    <div id="home-status">
+      <p class="loading" role="status">Loading content…</p>
+    </div>
 
-    <ul class="card-grid">
+    <ul class="card-grid" aria-label="Sections">
       <li class="card">
         <h2>Grammar Lessons</h2>
         <p>Explanations of grammar rules with examples.</p>
-        <p class="card-count" data-count="lessons"></p>
+        <p class="card-count" data-count="lessons">Loading…</p>
         <div class="card-actions"><a class="btn" href="grammar.html">Open lessons</a></div>
       </li>
       <li class="card">
         <h2>Grammar Summaries</h2>
         <p>Short revision notes for each grammar topic.</p>
-        <p class="card-count" data-count="summaries"></p>
+        <p class="card-count" data-count="summaries">Loading…</p>
         <div class="card-actions"><a class="btn" href="summaries.html">Open summaries</a></div>
       </li>
       <li class="card">
         <h2>Grammar Practice</h2>
         <p>Answer questions, get feedback and track your score.</p>
-        <p class="card-count" data-count="questions"></p>
+        <p class="card-count" data-count="questions">Loading…</p>
         <div class="card-actions"><a class="btn" href="practice.html">Start practising</a></div>
       </li>
       <li class="card">
         <h2>Reading Comprehension</h2>
         <p>Read passages and answer questions about them.</p>
-        <p class="card-count" data-count="passages"></p>
+        <p class="card-count" data-count="passages">Loading…</p>
         <div class="card-actions"><a class="btn" href="reading.html">Open reading</a></div>
       </li>
     </ul>

@@ -1,118 +1,148 @@
 # Project status — Grade 12 English
 
-_Last updated: 19 October 2026 (end of Phase 1)_
+_Last updated: 20 October 2026 (end of Phase 1 & 1.5, awaiting approval for Phase 2)_
+
+Live site: https://abdo098765432110-ux.github.io/grade12-english/
+Repository: https://github.com/abdo098765432110-ux/grade12-english
 
 ## Summary
 
-Phase 1 is complete: a working static website for GitHub Pages with four
-student sections (Grammar Lessons, Grammar Summaries, Grammar Practice,
-Reading Comprehension) and a content manager for adding, editing, deleting,
-reordering, importing and exporting content.
-
-The content library is **empty**. No lessons, summaries, questions, answers,
-explanations or reading passages have been written for the site. All
-educational content will be added by the project owner.
-
-## Requirement changes during Phase 1
-
-| Date | Change |
+| Phase | Status |
 |---|---|
-| 19 Oct 2026 | Original Phase 1 brief asked for clearly labelled demonstration content and said the content editor belonged to Phase 3. |
-| 19 Oct 2026 | **Corrected by the owner:** no invented educational content at all; start with an empty library; build the content-management tools (add, edit, delete, import, export) now. Demonstration content that had already been drafted (6 lessons, 6 summaries, 48 questions) was deleted; nothing from it remains in the project. |
+| Phase 1 — working core: student pages, quiz engine, content manager, empty content library | Done (19 Oct 2026) |
+| Phase 1.5 — audit of the live site, fix, homepage/navigation, loading/empty/error states | Done in the project files (20 Oct 2026). **The live site stays broken until the corrected files are uploaded** (see “Exact next steps”). |
+| Phase 2 | Not started. Waiting for approval. |
+
+The content library is still **empty**. No lessons, summaries, questions,
+answers, explanations or reading passages have been written for the site.
+All educational content will be added by the project owner.
+
+## Phase 1.5 — diagnosis
+
+The live site showed plain, unstyled HTML because **the `css`, `js` and
+`data` folders were never uploaded**. The repository (commit `5eb4af4`, “Add
+files via upload”) contains only the 10 top-level files. Every stylesheet,
+script and data file the pages request returns 404.
+
+Paths, letter case, folder structure and GitHub Pages settings were all
+checked and were already correct. The most likely cause is GitHub’s
+“choose your files” upload button, which cannot select folders.
+
+Full report: [docs/GITHUB_PAGES_DIAGNOSTIC.md](docs/GITHUB_PAGES_DIAGNOSTIC.md).
+
+## Phase 1.5 — changes
+
+- **Missing-file fallback (all pages).** A small inline script in `<head>`
+  detects CSS/JS files that fail to load. It shows a red message naming them
+  and replaces the endless “Loading…” with “This content could not be loaded.”
+- **Loading state.** A spinner with “Loading…” (no animation for users who
+  turn on reduced motion). After 8 seconds the text changes to “Still
+  loading… This is taking longer than usual.” After 30 seconds the load stops
+  and an error is shown.
+- **Error state.** The page heading stays, plus “This content could not be
+  loaded”, the reason (missing file / invalid JSON / timeout / no
+  connection / incomplete download), a **Try again** button and a link home.
+  The content manager instead shows a warning and stays usable, so a teacher
+  can still reach their draft.
+- **Empty states.** Unchanged from Phase 1 and re-tested: each section says
+  e.g. “No lessons added yet” with a button to add content.
+- **Navigation.** The menu now uses the full section names: Home, Grammar
+  Lessons, Grammar Summaries, Grammar Practice, Reading Comprehension. Up to
+  768 px wide, a **Menu** button opens and closes the links (it reports open
+  or closed to screen readers, and Escape closes it). Without JavaScript, all
+  links stay visible.
+- **Homepage.** Section cards show “Loading…” and then the content counts,
+  or “Could not load” if the data files are missing.
+- **`tools/check-site.js`** (new). A pre-upload check for missing folders and
+  files, upper/lower-case mismatches and absolute paths.
+- **Clean-up.** `package.json` was removed: there are no packages, and the
+  test commands are now written out in README.md. The README publish steps now
+  explain how to upload folders.
 
 ## Project structure
 
+See README.md (“Folder structure”). Summary:
+
 ```
-index.html                 Home (section cards with content counts)
-grammar.html               Lesson list / single lesson (?lesson=<id>)
-summaries.html             All summaries (printable)
-practice.html              Topic + question-count selection, then quiz (?topic=<id>)
-reading.html               Passage list / passage with questions (?passage=<id>)
-manage.html                Content manager (teachers)
-css/style.css              All styles
-js/content-schema.js       Data format + validation (browser and Node)
-js/content-store.js        Library changes (save/delete/move/import), browser draft, preview flag
-js/common.js               Shared helpers: loading, notices, empty states, preview banner
-js/quiz-engine.js          Quiz rules (no page code)
-js/quiz-ui.js              Quiz screens (shared by Practice and Reading)
-js/home.js, grammar.js, summaries.js, practice.js, reading.js, manage.js
-data/grammar-lessons.json  { "schemaVersion": 1, "lessons": [] }
-data/grammar-summaries.json, data/grammar-questions.json, data/reading-passages.json (all empty)
-tools/validate-content.js  Command-line content check (Node.js, no packages)
-tests/*.test.js            Unit tests (Node built-in test runner)
-tests/e2e_test.py          Browser tests (Playwright; development only)
-docs/CONTENT_FORMAT.md     Data format reference
-README.md                  Running, publishing and content workflow
-.nojekyll                  Makes GitHub Pages serve files as they are
-package.json               Test/validate commands only (no dependencies)
+index.html grammar.html summaries.html practice.html reading.html manage.html .nojekyll
+css/style.css
+js/  content-schema.js content-store.js common.js quiz-engine.js quiz-ui.js
+     home.js grammar.js summaries.js practice.js reading.js manage.js
+data/ grammar-lessons.json grammar-summaries.json grammar-questions.json reading-passages.json  (all empty)
+docs/ CONTENT_FORMAT.md GITHUB_PAGES_DIAGNOSTIC.md
+tools/ check-site.js validate-content.js
+tests/ schema.test.js store.test.js quiz-engine.test.js check-site.test.js e2e_test.py
+README.md PROJECT_STATUS.md
 ```
 
-## Completed features
+## Test results (20 Oct 2026)
 
-**Student pages**
-- Responsive layout and navigation (desktop and 375 px phone width), skip link, visible focus, semantic HTML.
-- Empty states on every page (“No lessons added yet”, etc.) with a button to the matching “add” form.
-- Grammar lessons with six section types: text, note box, bulleted list, examples, table, common mistakes (avoid/use). Arabic sections display right to left.
-- Summaries page with table of contents, rule tables, reminders, links to lesson and practice; print styles.
-- Practice: topic selection (lessons with questions, plus “Other questions”), number of questions (5/10/20/all), random selection.
-- Quiz (Practice and Reading): answer selection, submit, feedback with explanation, **try again** (tried options disabled), show answer, next, results with per-question review, **retry missed questions**, **restart quiz**, change settings.
-- Scoring counts the first attempt of multiple-choice questions only. Short written answers are never auto-scored; students compare with the model answer.
-- **Answer-key honesty:** unless a question is marked `reviewed`, the site says “matches / different from the suggested answer” (never “correct / incorrect”), shows a “not yet reviewed” note, and marks the score as provisional.
-- Broken items in hand-edited files are skipped with a notice; invalid or missing files show a clear error message instead of a blank page.
-- All content is inserted as text (no HTML injection from data files).
-
-**Content manager (`manage.html`)**
-- Add / edit / delete / reorder lessons, summaries, grammar questions, reading passages, and each passage’s questions.
-- Lesson section editor (add, remove, reorder, change type); repeating rows for mistakes and summary points.
-- Multiple-choice editor (2–6 options, mark the correct one) and short-answer questions; “Save and add another” keeps the topic.
-- Validation before saving, with an error summary linked to the fields.
-- IDs generated from titles; renaming a lesson ID updates linked summaries and questions; deleting a lesson unlinks them (asks first).
-- Question filters (topic, text search).
-- Automatic draft saving in the browser; warning when the published files changed since the draft began; warning before leaving a form with unsaved changes.
-- Preview the draft on the real student pages (this browser only).
-- Export the four data files (individually or all), backup file, import (merge or replace) with full validation before any change, content check report, discard draft.
-
-## Test results (run on 19 Oct 2026)
-
-Environment: Linux, Node.js 22.22.0, Python 3.13, Playwright with headless Chromium 141. The site was served from a **subfolder** (`http://127.0.0.1:<port>/grade12-english/`) to match GitHub Pages project sites.
+Environment: Linux, Node.js 22.22.0, Python 3.13, Playwright 1.56 with
+headless Chromium 141. The site was served from a `/grade12-english/`
+subfolder, the same path as on GitHub Pages.
 
 | Test | Result |
 |---|---|
-| `npm test` — unit tests (schema, store, quiz engine) | **36 / 36 passed** |
-| `node tools/validate-content.js` on the empty data files | **OK** |
-| `python tests/e2e_test.py` — browser tests | **77 / 77 checks passed** |
-| Project `data/` files after the browser tests | Still empty (verified) |
+| Published repository served locally (before the fix) | Reproduced the live problem: 404 for `css/style.css` and every `js/…` file; unstyled page; Grammar page stuck on “Loading…” |
+| `node tools/check-site.js` on the published repository | 37 problems found (3 missing folders, 34 missing references) |
+| `node tools/check-site.js` on the fixed project | OK: 84 references checked, all present with exact case, all relative |
+| `node tools/validate-content.js` | OK (empty library) |
+| `node --test tests/*.test.js` | **41 / 41 passed** (36 from Phase 1 + 5 new site-check tests) |
+| `python tests/e2e_test.py` | **115 / 115 checks passed** on three runs in a row |
+| Project `data/` files after the tests | Still empty (verified) |
 
-The browser tests cover: empty states on all pages; adding/editing/deleting/reordering every content type in the manager; form validation messages; lesson ID rename cascade; unsaved-changes prompt; preview on all student pages; practice quiz (unreviewed and reviewed wording, try again, show answer, results, retry missed, restart, change settings); reading quiz; export of all files and backup; exported files passing the command-line validator; published files shown without preview; broken item skipped; invalid JSON and missing file messages; import merge, re-import, invalid import rejected, replace import; discard draft; phone-width layout; no browser console errors.
+New browser checks in Phase 1.5:
 
-Accessibility checks performed (custom, in the browser tests, on every tested screen): every form control labelled, every link/button named, one `h1`, no skipped heading levels, no duplicate IDs, no broken `aria-describedby`/`aria-labelledby` references, no sideways scrolling at 375 px, and text colour pairs at least 4.5:1 contrast (WCAG AA). Focus movement after submitting an answer and after reordering items was checked.
+- **Missing folders.** With `css/js/data` blocked, the red message names the
+  missing files and no page stays on “Loading…”.
+- **Stylesheet only missing.** The message shows and the content still loads.
+- **Data files missing.** Error state on every student page (heading, reason,
+  Try again). The content manager warns and stays usable. The home page shows
+  “Could not load”. **Try again** recovers once the files are back.
+- **Loading and timeout.** The spinner is shown, the slow notice appears
+  after 8 s, and the load gives up after 30 s (tested with a simulated clock).
+- **Navigation.** Five links in order; each opens the right page and is
+  marked as current. At 375 px the Menu button sits beside the site name,
+  opens and closes, and Escape returns focus to it. Without JavaScript, all
+  links are visible and pages explain that JavaScript is needed.
+- **Accessibility and layout.** Labels, names, headings, no sideways
+  scrolling at 375, 768 and 1024 px, and colour contrast of at least 4.5:1.
 
-Visual review of screenshots led to three fixes, all re-tested: result colours on selected options, right-hand border for Arabic notes, and spacing above quiz results.
+Visual review of screenshots found one problem: on phones the Menu button
+wrapped under the site name. It was fixed and re-tested at 320, 375 and
+768 px.
 
 ## Not tested / known limitations
 
-- **Not deployed to GitHub Pages yet** — tested with a local server in a subfolder only.
-- Tested in **Chromium only**. Not tested in Firefox, Safari, or on real phones.
-- The automated accessibility tool axe-core could not be installed (package download blocked in this environment); custom checks were used instead. Not tested with a real screen reader.
-- Opening pages directly from disk (`file://`) is not supported; a message explains this. Use GitHub Pages or a local server.
-- Drafts are stored per browser (usually about 5 MB available). Clearing site data deletes the draft — download backups.
-- “Download all four files” may trigger a browser prompt to allow multiple downloads.
-- Publishing requires uploading the exported files to GitHub manually (by design: no accounts or server).
-- No student progress saving between visits.
-- Topic and wording of the student pages have not been checked against the current official Egyptian Grade 12 syllabus.
+- **The live site has not been re-checked after the fix**, because the
+  corrected files have not been uploaded yet. This session can read the
+  repository but not push to it.
+- Tested in **Chromium only**. Not tested in Firefox, Safari, on real phones,
+  or with a screen reader. The axe-core accessibility scanner could not be
+  installed here (download blocked); custom checks were used instead.
+- At desktop widths the five full section names do not fit beside the site
+  name, so the menu sits on its own row under it. This is intended.
+- All Phase 1 limitations still apply: drafts are per browser; publishing is
+  a manual upload; there is no saved student progress; the wording has not
+  been checked against the official syllabus.
 
-## Remaining tasks (not started)
+## Remaining tasks
 
-- Owner: add all educational content and publish it.
-- Deploy to GitHub Pages and re-check the live site.
-- Cross-browser and real-device testing (Firefox, Safari, Android/iOS phones); screen-reader check.
-- Possible later additions (only if wanted): saving student progress in the browser, more question types (e.g. typed fill-in-the-blank, matching), search, Arabic interface text, an automatic content check on GitHub (GitHub Actions running `tools/validate-content.js`).
+- Owner: upload the corrected project, confirm the live site, then add content.
+- Phase 2 and later: waiting for approval and instructions.
+- Cross-browser and real-device testing; screen-reader check.
 
 ## Exact next steps
 
-1. Create a GitHub repository and upload every file in this folder, including `.nojekyll`.
-2. Settings → Pages → Deploy from a branch → `main`, `/ (root)` → Save.
-3. Open `https://<user>.github.io/<repository>/` and confirm the empty-state pages load.
-4. Open `manage.html` on the live site, add content, tick preview to check it, then Import & export → Download all four files.
-5. Upload the four files into the repository’s `data/` folder (replace existing) and commit. Reload the site after a few minutes.
-6. Download a backup file regularly.
+1. Unzip the delivered `grade12-english.zip` and open the `grade12-english` folder.
+2. GitHub → repository → **Add file → Upload files**. Select everything in
+   the folder and **drag** it onto the page (do not use “choose your files”).
+3. Check that the file list includes `css/style.css`, `js/common.js` and
+   `data/grammar-lessons.json`. Commit.
+4. Optional: delete `package.json` from the repository. It is no longer used,
+   and uploading does not remove it.
+5. After 1–2 minutes, open https://abdo098765432110-ux.github.io/grade12-english/
+   and reload with Ctrl+F5. Expected: a styled page with the five-link menu
+   and the message “No content added yet”. If a red “could not be loaded”
+   message appears instead, it names the files that are still missing.
+6. Confirm, and approve Phase 2.
