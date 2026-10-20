@@ -11,6 +11,11 @@
    Scoring: only multiple-choice ("mcq") questions are scored, and only the
    first attempt counts. Short written answers are recorded and compared
    with the model answer by the student; they are never auto-scored.
+
+   Two ways to answer:
+     Quiz      one question at a time, feedback after each, retries allowed.
+     gradeAll  a whole set answered first and checked together. A question
+               with no answer is "unanswered" and is never counted as correct.
    ========================================================================== */
 (function (root, factory) {
   var api = factory();
@@ -42,6 +47,23 @@
     return question.type === 'mcq';
   }
 
+  /* A multiple-choice question can only be marked if its answer key is one
+     of its options. (Pages also filter out broken questions before this.) */
+  function hasValidAnswerKey(question) {
+    if (!question || question.type !== 'mcq') return true;
+    return Array.isArray(question.options) &&
+      typeof question.answer === 'string' && question.answer !== '' &&
+      question.options.indexOf(question.answer) !== -1;
+  }
+
+  function checkAnswerKeys(questions) {
+    questions.forEach(function (question) {
+      if (!hasValidAnswerKey(question)) {
+        throw new Error('Question "' + (question && question.id) + '" has no valid answer key, so it cannot be marked.');
+      }
+    });
+  }
+
   function outcomeFor(matches, reviewed) {
     if (reviewed) return matches ? 'correct' : 'incorrect';
     return matches ? 'matches' : 'differs';
@@ -54,6 +76,7 @@
     if (!Array.isArray(questions) || questions.length === 0) {
       throw new Error('A quiz needs at least one question.');
     }
+    checkAnswerKeys(questions);
     options = options || {};
     this.original = questions.slice();
     this.shouldShuffle = options.shuffle !== false;
@@ -157,12 +180,14 @@
       return item.attempts.length > 0 && item.attempts[0].matches;
     }).length;
     var unreviewed = scored.filter(function (item) { return !isReviewed(item.question); }).length;
+    var unanswered = scored.filter(function (item) { return item.attempts.length === 0; }).length;
     return {
       round: this.round,
       roundType: this.roundType,
       total: this.items.length,
       scoredCount: scored.length,
       firstTryMatches: firstTry,
+      unansweredCount: unanswered,
       percent: scored.length ? Math.round((firstTry / scored.length) * 100) : null,
       unreviewedCount: unreviewed,
       provisional: unreviewed > 0,
@@ -202,8 +227,82 @@
     this._begin(missed, 'missed');
   };
 
+  /**
+   * Marks a whole set of questions at once.
+   *   gradeAll(questions, { questionId: chosen option text or written answer })
+   *
+   * Each result has a status:
+   *   'correct' / 'incorrect'   reviewed multiple-choice question
+   *   'matches' / 'differs'     unreviewed multiple-choice question
+   *   'unanswered'              nothing chosen (or an answer that is not one
+   *                             of the options) — never counted as correct
+   *   'recorded'                written answer (never scored)
+   *   'no-key'                  multiple-choice question without a valid
+   *                             answer key — not scored
+   */
+  function gradeAll(questions, answers) {
+    answers = answers || {};
+    var items = (questions || []).map(function (question) {
+      var reviewed = isReviewed(question);
+      var given = answers[question.id];
+      var text = typeof given === 'string' ? given : '';
+
+      if (question.type === 'short') {
+        var written = text.trim();
+        return { question: question, reviewed: reviewed, scored: false, correct: false,
+          status: written ? 'recorded' : 'unanswered', response: written || null };
+      }
+      if (!hasValidAnswerKey(question)) {
+        return { question: question, reviewed: reviewed, scored: false, correct: false, status: 'no-key', response: null };
+      }
+      if (!text || question.options.indexOf(text) === -1) {
+        return { question: question, reviewed: reviewed, scored: true, correct: false, status: 'unanswered', response: null };
+      }
+      var correct = text === question.answer;
+      return { question: question, reviewed: reviewed, scored: true, correct: correct,
+        status: outcomeFor(correct, reviewed), response: text };
+    });
+
+    var scored = items.filter(function (item) { return item.scored; });
+    var correctCount = scored.filter(function (item) { return item.correct; }).length;
+    var unansweredCount = scored.filter(function (item) { return item.status === 'unanswered'; }).length;
+    var unreviewedCount = scored.filter(function (item) { return !item.reviewed; }).length;
+    var written = items.filter(function (item) { return item.question.type === 'short'; });
+    return {
+      items: items,
+      total: items.length,
+      scoredCount: scored.length,
+      correctCount: correctCount,
+      incorrectCount: scored.length - correctCount - unansweredCount,
+      unansweredCount: unansweredCount,
+      percent: scored.length ? Math.round((correctCount / scored.length) * 100) : null,
+      unreviewedCount: unreviewedCount,
+      provisional: unreviewedCount > 0,
+      shortAnswerCount: written.length,
+      shortUnansweredCount: written.filter(function (item) { return item.status === 'unanswered'; }).length,
+      noKeyCount: items.filter(function (item) { return item.status === 'no-key'; }).length,
+      /* Scored questions that were not correct (wrong or unanswered). */
+      missed: scored.filter(function (item) { return !item.correct; }).map(function (item) { return item.question; })
+    };
+  }
+
+  /* Numbers (1-based) of the questions that still have no answer. */
+  function unansweredNumbers(questions, answers) {
+    var numbers = [];
+    (questions || []).forEach(function (question, index) {
+      var given = answers && answers[question.id];
+      var text = typeof given === 'string' ? given.trim() : '';
+      var answered = question.type === 'short' ? text !== '' : (text !== '' && Array.isArray(question.options) && question.options.indexOf(given) !== -1);
+      if (!answered) numbers.push(index + 1);
+    });
+    return numbers;
+  }
+
   return {
     Quiz: Quiz,
+    gradeAll: gradeAll,
+    unansweredNumbers: unansweredNumbers,
+    hasValidAnswerKey: hasValidAnswerKey,
     shuffle: shuffle,
     isReviewed: isReviewed
   };

@@ -353,4 +353,293 @@
 
     return quiz;
   };
+
+  /* ==========================================================================
+     Answer-all mode ("worksheet"): every question is shown in order, the
+     student answers any of them, then checks them all at once.
+
+     G12.renderWorksheet(container, questions, {
+       label: 'Questions about …',   // accessible name
+       title: 'Questions',           // heading text
+       resultActions: [{ label, onClick }]
+     })
+     Unanswered questions are reported before checking and are marked
+     "Not answered" with no marks; they are never counted as correct.
+     ========================================================================== */
+  var worksheetCount = 0;
+
+  G12.renderWorksheet = function (container, questions, options) {
+    options = options || {};
+    var root = el('section', { className: 'quiz worksheet', 'aria-label': options.label || 'Questions' });
+    G12.clear(container).appendChild(root);
+    draw(questions, false, false);
+
+    function draw(set, missedRound, moveFocus) {
+      worksheetCount += 1;
+      var prefix = 'ws' + worksheetCount;
+      var answers = {};
+      var confirmedBlank = false;
+      var views = [];
+      G12.clear(root);
+
+      var heading = el('h2', {
+        tabindex: '-1',
+        text: (missedRound ? 'Missed questions' : (options.title || 'Questions')) + ' (' + set.length + ')'
+      });
+      var answeredText = el('p', { className: 'answered-count', 'aria-live': 'polite' });
+      root.appendChild(el('div', { className: 'quiz-header' }, [heading, answeredText]));
+      root.appendChild(el('p', { className: 'hint', text: 'Answer the questions in any order, then choose “Check my answers”.' }));
+      var scoreArea = el('div', { className: 'worksheet-score' });
+      root.appendChild(scoreArea);
+
+      var form = el('form', { novalidate: true });
+      var list = el('ol', { className: 'worksheet-list' });
+      set.forEach(function (question, index) {
+        var view = questionView(question, index, prefix + '-q' + index);
+        views.push(view);
+        list.appendChild(view.li);
+      });
+      var warning = el('div', { className: 'worksheet-warning' });
+      var actions = el('div', { className: 'actions' }, [
+        el('button', { type: 'submit', className: 'btn', text: 'Check my answers' })
+      ]);
+      form.appendChild(list);
+      form.appendChild(warning);
+      form.appendChild(actions);
+      root.appendChild(form);
+
+      function updateCount() {
+        var blank = G12.QuizEngine.unansweredNumbers(set, answers).length;
+        answeredText.textContent = 'Answered ' + (set.length - blank) + ' of ' + set.length;
+      }
+      updateCount();
+
+      form.addEventListener('change', function (event) {
+        var target = event.target;
+        if (target && target.type === 'radio') {
+          answers[target.getAttribute('data-question')] = set[Number(target.getAttribute('data-q'))].options[Number(target.getAttribute('data-index'))];
+          updateCount();
+        }
+      });
+      form.addEventListener('input', function (event) {
+        var target = event.target;
+        if (target && target.tagName === 'TEXTAREA') {
+          answers[target.getAttribute('data-question')] = target.value;
+          updateCount();
+        }
+      });
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var blank = G12.QuizEngine.unansweredNumbers(set, answers);
+        if (blank.length && !confirmedBlank) {
+          showBlankWarning(blank);
+          return;
+        }
+        check();
+      });
+
+      function showBlankWarning(blank) {
+        G12.clear(warning);
+        var first = views[blank[0] - 1];
+        warning.appendChild(el('div', { className: 'notice notice--demo', role: 'alert', tabindex: '-1' }, [
+          el('p', null, [
+            el('strong', { text: 'You have not answered ' + G12.plural(blank.length, 'question') + ': ' }),
+            blank.join(', ') + '. Unanswered questions are marked “Not answered” and get no marks.'
+          ]),
+          el('div', { className: 'actions' }, [
+            el('button', {
+              type: 'button',
+              className: 'btn btn--secondary',
+              text: 'Go to question ' + blank[0],
+              onclick: function () {
+                G12.clear(warning);
+                first.li.scrollIntoView({ block: 'center' });
+                first.focusTarget().focus();
+              }
+            }),
+            el('button', {
+              type: 'button',
+              className: 'btn',
+              text: 'Check anyway',
+              onclick: function () {
+                confirmedBlank = true;
+                check();
+              }
+            })
+          ])
+        ]));
+        G12.focus(warning.firstChild);
+      }
+
+      function check() {
+        G12.clear(warning);
+        var result = G12.QuizEngine.gradeAll(set, answers);
+        result.items.forEach(function (item, index) { views[index].showResult(item); });
+        answeredText.textContent = '';
+        showScore(result);
+        G12.clear(actions);
+        if (result.missed.length) {
+          actions.appendChild(el('button', {
+            type: 'button',
+            className: 'btn',
+            text: 'Retry missed questions (' + result.missed.length + ')',
+            onclick: function () { draw(result.missed, true, true); }
+          }));
+        }
+        actions.appendChild(el('button', {
+          type: 'button',
+          className: result.missed.length ? 'btn btn--secondary' : 'btn',
+          text: 'Start again',
+          onclick: function () { draw(questions, false, true); }
+        }));
+        (options.resultActions || []).forEach(function (action) {
+          actions.appendChild(el('button', { type: 'button', className: 'btn btn--secondary', text: action.label, onclick: action.onClick }));
+        });
+      }
+
+      function showScore(result) {
+        G12.clear(scoreArea);
+        var scoreHeading = el('h3', { tabindex: '-1', text: 'Your score' });
+        scoreArea.appendChild(scoreHeading);
+        if (result.scoredCount > 0) {
+          var reviewedWords = !result.provisional;
+          scoreArea.appendChild(el('div', { className: 'score-box' }, [
+            el('p', { className: 'score-number', text: result.correctCount + ' / ' + result.scoredCount }),
+            el('p', {
+              text: (reviewedWords ? 'questions answered correctly' : 'answers matched the suggested answers') + ' (' + result.percent + '%).'
+            }),
+            el('ul', { className: 'score-breakdown' }, [
+              el('li', { text: (reviewedWords ? 'Correct: ' : 'Matched: ') + result.correctCount }),
+              el('li', { text: (reviewedWords ? 'Not correct: ' : 'Different: ') + result.incorrectCount }),
+              el('li', { text: 'Not answered: ' + result.unansweredCount })
+            ])
+          ]));
+          if (result.provisional) {
+            scoreArea.appendChild(el('div', { className: 'notice notice--demo', role: 'note' }, [
+              el('p', null, [
+                el('strong', { text: 'Provisional score. ' }),
+                G12.plural(result.unreviewedCount, 'answer') + ' in this set ' + (result.unreviewedCount === 1 ? 'has' : 'have') +
+                ' not yet been reviewed by a teacher, so this score may change after review.'
+              ])
+            ]));
+          }
+        }
+        if (result.shortAnswerCount > 0) {
+          scoreArea.appendChild(el('p', {
+            text: G12.plural(result.shortAnswerCount, 'written answer') + ' ' + (result.shortAnswerCount === 1 ? 'is' : 'are') +
+              ' not scored. Compare ' + (result.shortAnswerCount === 1 ? 'it' : 'them') + ' with the suggested answers below.'
+          }));
+        }
+        G12.focus(scoreHeading);
+      }
+    }
+
+    /* One question in the list: its inputs, and later its result. */
+    function questionView(question, index, id) {
+      var reviewed = G12.isReviewed(question);
+      var labels = [];
+      if (question.difficulty) labels.push('Difficulty: ' + question.difficulty);
+      var number = el('span', { className: 'question-number', text: 'Question ' + (index + 1) });
+      var result = el('div', { className: 'feedback', id: id + '-result' });
+      var li = el('li', { className: 'worksheet-q', id: id });
+      var inputs = [];
+      var optionItems = [];
+      var textarea = null;
+
+      if (question.type === 'mcq') {
+        var optionList = el('ul', { className: 'options' });
+        question.options.forEach(function (option, i) {
+          var input = el('input', {
+            type: 'radio', name: id, value: String(i),
+            'data-q': String(index), 'data-index': String(i), 'data-question': question.id
+          });
+          var status = el('span', { className: 'option-status' });
+          var optionLi = el('li', { className: 'option' }, [
+            el('label', null, [
+              input,
+              el('span', { className: 'option-letter', 'aria-hidden': 'true', text: LETTERS.charAt(i) + '.' }),
+              el('span', { className: 'option-text', dir: 'auto', text: option }),
+              status
+            ])
+          ]);
+          inputs.push(input);
+          optionItems.push({ li: optionLi, input: input, status: status, option: option });
+          optionList.appendChild(optionLi);
+        });
+        li.appendChild(el('fieldset', null, [
+          el('legend', { className: 'question-legend', dir: 'auto' }, [number, G12.renderPrompt(question.prompt)]),
+          G12.badges(question, labels),
+          optionList
+        ]));
+      } else {
+        textarea = el('textarea', { id: id + '-answer', dir: 'auto', rows: '4', 'data-question': question.id });
+        li.appendChild(el('div', { className: 'form-row' }, [
+          el('label', { className: 'question-legend', for: id + '-answer', dir: 'auto' }, [number, G12.renderPrompt(question.prompt)]),
+          G12.badges(question, labels),
+          el('p', { className: 'hint', id: id + '-hint', text: 'Written answers are not scored automatically.' }),
+          textarea
+        ]));
+        textarea.setAttribute('aria-describedby', id + '-hint');
+      }
+      li.appendChild(result);
+
+      function correctLabel() {
+        return reviewed ? 'Correct answer' : 'Suggested answer';
+      }
+
+      function showResult(item) {
+        inputs.forEach(function (input) { input.disabled = true; });
+        if (textarea) textarea.readOnly = true;
+        var kind;
+        var title;
+        var children = [];
+
+        if (question.type === 'mcq') {
+          optionItems.forEach(function (entry) {
+            var chosen = entry.option === item.response;
+            var isAnswer = entry.option === question.answer;
+            entry.li.classList.toggle('option--match', isAnswer);
+            entry.li.classList.toggle('option--tried', chosen && !isAnswer);
+            if (isAnswer && chosen) entry.status.textContent = '✓ Your answer';
+            else if (isAnswer) entry.status.textContent = '✓ ' + correctLabel();
+            else if (chosen) entry.status.textContent = '✗ Your answer';
+          });
+          switch (item.status) {
+            case 'correct':
+              kind = 'match'; title = 'Correct.'; break;
+            case 'matches':
+              kind = 'match'; title = 'Your answer matches the suggested answer.'; break;
+            case 'incorrect':
+              kind = 'differs'; title = 'Not correct. Correct answer: ' + question.answer; break;
+            case 'differs':
+              kind = 'differs'; title = 'Different from the suggested answer. Suggested answer: ' + question.answer; break;
+            default:
+              kind = 'warning'; title = 'Not answered — no marks. ' + correctLabel() + ': ' + question.answer;
+          }
+        } else if (item.status === 'recorded') {
+          kind = 'info';
+          title = 'Compare your answer with the ' + (reviewed ? 'model answer' : 'suggested answer') + ':';
+          children.push(el('p', { dir: 'auto', text: question.modelAnswer }));
+        } else {
+          kind = 'warning';
+          title = 'Not answered. ' + (reviewed ? 'Model answer:' : 'Suggested answer:');
+          children.push(el('p', { dir: 'auto', text: question.modelAnswer }));
+        }
+        children.push(explanationParagraph(question, reviewed));
+        if (!reviewed) children.push(reviewNote());
+
+        G12.clear(result);
+        result.className = 'feedback feedback--' + kind;
+        result.appendChild(el('p', { className: 'feedback-title', dir: 'auto', text: title }));
+        children.forEach(function (child) { if (child) result.appendChild(child); });
+      }
+
+      return {
+        li: li,
+        showResult: showResult,
+        focusTarget: function () { return inputs[0] || textarea; }
+      };
+    }
+  };
 })(window);

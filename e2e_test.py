@@ -240,7 +240,7 @@ def manager_flow(context, base):
     page.click(".manager-nav >> text=Summaries")
     page.click("text=Add a summary >> nth=0")
     page.fill("#f-title", "Test summary")
-    page.select_option("#f-lesson", "test-lesson-one")
+    page.select_option("#f-topic", "test-lesson-one")
     page.fill("#pt-0-title", "P1")
     page.fill("#pt-0-rule", "Rule one")
     page.fill("#pt-0-example", "Example one")
@@ -335,10 +335,10 @@ def manager_flow(context, base):
     page.click("[aria-label='Edit lesson “Test lesson one”']")
     page.fill("#f-id", "renamed-lesson")
     page.click("button:has-text('Save changes')")
-    expect(page.locator(".manager-message")).to_contain_text("now use the new ID")
+    expect(page.locator(".manager-message")).to_contain_text("now use the new topic ID")
     library = draft(page)
     record("renaming a lesson updates linked questions and summaries",
-           all(q.get("topic") == "renamed-lesson" for q in library["questions"]) and library["summaries"][0]["lessonId"] == "renamed-lesson")
+           all(q.get("topicId") == "renamed-lesson" for q in library["questions"]) and library["summaries"][0]["topicId"] == "renamed-lesson")
 
     # --- Delete lesson two
     page.click("[data-id='test-lesson-two'][data-action='delete']")
@@ -398,7 +398,7 @@ def student_pages_in_preview(page, base):
     page.screenshot(path=str(SHOTS / "04-lesson-page.png"), full_page=True)
 
     page.click("text=Read the summary")
-    expect(page).to_have_url(re.compile(r"summaries\.html#test-summary$"))
+    expect(page).to_have_url(re.compile(r"summaries\.html\?topic=renamed-lesson$"))
     expect(page.locator(".summary-card tbody tr")).to_have_count(2)
     audit(page, "summaries page")
 
@@ -458,6 +458,9 @@ def student_pages_in_preview(page, base):
     expect(page.locator(".card .passage-meta")).to_contain_text("2 questions")
     page.click("text=Read passage")
     expect(page.locator(".passage-paragraphs li")).to_have_count(2)
+    expect(page.locator(".mode-switch button[aria-pressed='true']")).to_have_text("All questions")
+    expect(page.locator(".worksheet-q .question-legend").first).to_contain_text("Passage question two")
+    page.click(".mode-switch button:has-text('One at a time')")
     expect(page.locator(".question-legend, .question-form label.question-legend").first).to_contain_text("Passage question two")
     page.fill(".question-form textarea", "Reading answer")
     page.click("button:has-text('Submit answer')")
@@ -496,7 +499,7 @@ def student_pages_in_preview(page, base):
 def export_files(page, base):
     page.goto(base + "manage.html#tools")
     names = {}
-    for key, file in [("lessons", "grammar-lessons.json"), ("summaries", "grammar-summaries.json"),
+    for key, file in [("units", "units.json"), ("lessons", "grammar-lessons.json"), ("summaries", "grammar-summaries.json"),
                       ("questions", "grammar-questions.json"), ("passages", "reading-passages.json")]:
         with page.expect_download() as info:
             page.click("button:has-text('Download %s')" % file)
@@ -509,7 +512,7 @@ def export_files(page, base):
         page.click("button:has-text('Download backup file')")
     backup = DOWNLOADS / info.value.suggested_filename
     info.value.save_as(backup)
-    record("four data files and a backup downloaded",
+    record("five data files and a backup downloaded",
            all(p.exists() for p in names.values()) and re.match(r"grade12-english-backup-\d{4}-\d{2}-\d{2}\.json", backup.name) is not None,
            ", ".join(sorted(p.name for p in names.values())) + ", " + backup.name)
 
@@ -667,7 +670,7 @@ def missing_files_and_states(browser, base):
     expect(page.locator(".status-bar .notice--error")).to_contain_text("could not be loaded")
     record("data missing: content manager warns but stays usable",
            "was not found (HTTP 404)" in page.locator(".status-bar").inner_text()
-           and page.locator(".manager-nav a").count() == 5)
+           and page.locator(".manager-nav a").count() == 6)
     page.goto(base + "index.html")
     expect(page.locator("#home-status .error-state")).to_be_visible()
     record("data missing: home page shows the error and 'Could not load' counts",
@@ -770,7 +773,295 @@ def navigation(browser, base):
     context.close()
 
 
-# ---------------------------------------------------------------- 8. colour contrast
+# ---------------------------------------------------------------- 8. Phase 2: units, topics, answer-all
+
+def fixture_question(qid, **extra):
+    question = {"id": qid, "type": "mcq", "prompt": "Test prompt " + qid, "options": ["Opt A", "Opt B", "Opt C"],
+                "answer": "Opt B", "reviewStatus": "unreviewed"}
+    question.update(extra)
+    return question
+
+
+# Placeholder test data only (served by the test, never written to data/).
+# Summaries and questions deliberately use the old version 1 field names.
+PHASE2_DATA = {
+    "units.json": {"schemaVersion": 2, "units": [
+        {"id": "u1", "title": "Test unit one", "description": "Placeholder unit description"},
+        {"id": "u2", "title": "Test unit two"}]},
+    "grammar-lessons.json": {"schemaVersion": 2, "lessons": [
+        {"id": "l1", "unitId": "u1", "title": "Test topic one", "reviewStatus": "unreviewed",
+         "sections": [{"type": "text", "paragraphs": ["Line one\nLine two"]}]},
+        {"id": "l2", "title": "Test topic without unit", "reviewStatus": "unreviewed", "sections": []}]},
+    "grammar-summaries.json": {"schemaVersion": 1, "summaries": [
+        {"id": "s1", "lessonId": "l1", "title": "Test summary", "reviewStatus": "unreviewed", "remember": ["Reminder"]}]},
+    "grammar-questions.json": {"schemaVersion": 1, "questions": [
+        fixture_question("q1", topic="l1"),
+        fixture_question("q2", unitId="u1", reviewStatus="reviewed"),
+        {"id": "q3", "type": "short", "prompt": "Short prompt", "modelAnswer": "Model text", "reviewStatus": "unreviewed", "unitId": "u1"},
+        fixture_question("q4", answer="B"),
+        fixture_question("q5")]},
+    "reading-passages.json": {"schemaVersion": 2, "passages": [
+        {"id": "p1", "unitId": "u1", "title": "Test passage", "reviewStatus": "unreviewed",
+         "paragraphs": ["Para one line 1\nPara one line 2", "Para   two"],
+         "questions": [fixture_question("rq1"),
+                       {"id": "rq2", "type": "short", "prompt": "Reading short", "modelAnswer": "Model r", "reviewStatus": "unreviewed"},
+                       fixture_question("rq3", answer="Opt C")]},
+        {"id": "p2", "title": "Plain passage", "showParagraphNumbers": False, "reviewStatus": "unreviewed",
+         "paragraphs": ["Only paragraph"], "questions": []}]},
+}
+
+
+def phase2_pages(browser, base):
+    context = browser.new_context(viewport={"width": 1280, "height": 900})
+    for name, body in PHASE2_DATA.items():
+        context.route("**/data/" + name, serve_json(json.dumps(body)))
+    page = watch(context.new_page())
+
+    # Grammar lessons by unit and topic
+    page.goto(base + "grammar.html")
+    settle(page)
+    nav = page.locator(".unit-nav a").all_inner_texts()
+    record("lessons: unit filter links", nav == ["All units", "Test unit one (1)", "Test unit two"], str(nav))
+    sections = page.locator(".unit-section > h2").all_inner_texts()
+    record("lessons: grouped by unit, with an 'Other topics' group", sections == ["Test unit one", "Test unit two", "Other topics"], str(sections))
+    record("lessons: empty unit says so", "No lessons in this unit yet." in page.locator("#unit-u2").locator("xpath=..").inner_text())
+    audit(page, "lessons by unit")
+    page.goto(base + "grammar.html?unit=u2")
+    settle(page)
+    expect(page.locator(".empty-state h3")).to_have_text("No lessons in this unit yet")
+    record("lessons: ?unit= filter with an empty unit shows an empty state",
+           page.locator(".unit-nav a[aria-current='page']").inner_text() == "Test unit two")
+    page.goto(base + "grammar.html?unit=missing")
+    settle(page)
+    expect(page.locator(".empty-state h2")).to_have_text("Unit not found")
+    page.goto(base + "grammar.html?topic=l1")
+    settle(page)
+    crumbs = page.locator(".breadcrumb li").all_inner_texts()
+    record("lessons: ?topic= opens the lesson with its unit in the breadcrumb", crumbs == ["Grammar Lessons", "Test unit one", "Test topic one"], str(crumbs))
+    paragraph = page.locator(".lesson-body p").first
+    record("lessons: line breaks in the text are kept",
+           paragraph.evaluate("p => getComputedStyle(p).whiteSpace") == "pre-line" and "\n" in paragraph.evaluate("p => p.textContent"))
+    page.goto(base + "grammar.html?lesson=l1")
+    settle(page)
+    expect(page.locator("h1")).to_have_text("Test topic one")
+    record("lessons: old ?lesson= links still work", True)
+    record("lessons: a broken practice question does not trigger a notice here", page.locator("text=could not be shown").count() == 0)
+
+    # Summaries by unit and topic (old field name lessonId is upgraded)
+    page.goto(base + "summaries.html?topic=l1")
+    settle(page)
+    expect(page.locator(".summary-card h2")).to_have_text("Test summary")
+    record("summaries: ?topic= shows the topic's summary (old 'lessonId' field upgraded)", True)
+    page.goto(base + "summaries.html?topic=l2")
+    settle(page)
+    expect(page.locator(".empty-state h2")).to_have_text("No summary for this topic yet")
+    page.goto(base + "summaries.html?unit=u2")
+    settle(page)
+    expect(page.locator(".empty-state h3")).to_have_text("No summaries in this unit yet")
+    page.goto(base + "summaries.html")
+    settle(page)
+    record("summaries: grouped by unit", page.locator("#unit-u1 a").inner_text() == "Test unit one"
+           and "No summaries in this unit yet." in page.inner_text("main"))
+    audit(page, "summaries by unit")
+
+    # Practice: unit and topic selection, empty states, broken answer key skipped
+    page.goto(base + "practice.html")
+    settle(page)
+    expect(page.locator("main")).to_contain_text("1 item could not be shown")
+    options = page.locator("#practice-unit option").all_inner_texts()
+    record("practice: units listed with counts and 'no questions yet'",
+           options == ["All units (4)", "Test unit one (3)", "Test unit two (no questions yet)", "Questions without a unit (1)"], str(options))
+    page.select_option("#practice-unit", "u2")
+    expect(page.locator(".practice-empty")).to_contain_text("No practice questions for this unit yet.")
+    record("practice: empty unit disables Start", page.is_disabled("button:has-text('Start practice')"))
+    audit(page, "practice empty unit")
+    page.goto(base + "practice.html?topic=l1")
+    settle(page)
+    record("practice: ?topic= preselects the topic and its unit",
+           page.input_value("#practice-unit") == "u1" and page.input_value("#practice-topic") == "l1")
+
+    # Answer-all mode: nothing answered can never score
+    page.goto(base + "practice.html?unit=u1")
+    settle(page)
+    page.check("#practice-mode-all")
+    page.click("button:has-text('Start practice')")
+    expect(page.locator(".worksheet-q")).to_have_count(3)
+    expect(page.locator(".answered-count")).to_have_text("Answered 0 of 3")
+    page.click("button:has-text('Check my answers')")
+    expect(page.locator(".worksheet-warning")).to_contain_text("You have not answered 3 questions: 1, 2, 3.")
+    record("answer-all: unanswered questions are listed before checking", True)
+    page.click("button:has-text('Check anyway')")
+    expect(page.locator(".worksheet-score .score-number")).to_have_text("0 / 2")
+    breakdown = page.locator(".score-breakdown").inner_text()
+    record("answer-all: unanswered questions score nothing", "Not answered: 2" in breakdown, breakdown.replace("\n", " | "))
+    record("answer-all: each unanswered question says 'Not answered'",
+           page.locator(".feedback--warning .feedback-title:has-text('Not answered')").count() == 3)
+    audit(page, "answer-all results")
+    page.screenshot(path=str(SHOTS / "15-answer-all-unanswered.png"), full_page=True)
+    page.click("button:has-text('Retry missed questions (2)')")
+    expect(page.locator(".worksheet h2")).to_have_text("Missed questions (2)")
+    for index in range(2):
+        page.locator(".worksheet-q").nth(index).locator("label:has-text('Opt B')").click()
+    expect(page.locator(".answered-count")).to_have_text("Answered 2 of 2")
+    page.click("button:has-text('Check my answers')")
+    expect(page.locator(".worksheet-score .score-number")).to_have_text("2 / 2")
+    record("answer-all: retry missed, answer all, full score", True)
+
+    # Reading: formatting kept, questions in stored order, both modes
+    page.goto(base + "reading.html?passage=p1")
+    settle(page)
+    first = page.locator(".passage-paragraphs li").first
+    record("reading: line breaks and spacing kept exactly",
+           first.evaluate("li => getComputedStyle(li).whiteSpace") == "pre-wrap"
+           and page.locator(".passage-paragraphs li").nth(1).evaluate("li => li.textContent") == "Para   two")
+    prompts = page.locator(".worksheet-q .question-legend, .worksheet-q label.question-legend").all_inner_texts()
+    record("reading: questions in the stored order", [p.split("\n")[-1] for p in prompts] == ["Test prompt rq1", "Reading short", "Test prompt rq3"], str(prompts))
+    record("reading: passage stays in view on wide screens",
+           page.locator("article.passage").evaluate("a => getComputedStyle(a).position") == "sticky")
+    page.locator(".worksheet-q").nth(0).locator("label:has-text('Opt B')").click()
+    page.locator(".worksheet-q").nth(2).locator("label:has-text('Opt A')").click()
+    page.click("button:has-text('Check my answers')")
+    page.click("button:has-text('Check anyway')")
+    expect(page.locator(".worksheet-score .score-number")).to_have_text("1 / 2")
+    record("reading: matched, different and unanswered are reported separately",
+           "Matched: 1" in page.locator(".score-breakdown").inner_text() and "Different: 1" in page.locator(".score-breakdown").inner_text())
+    audit(page, "reading answer-all")
+    page.screenshot(path=str(SHOTS / "16-reading-answer-all.png"), full_page=True)
+    page.click(".mode-switch button:has-text('One at a time')")
+    expect(page.locator(".quiz-progress-text")).to_have_text("Question 1 of 3")
+    expect(page.locator(".question-legend")).to_contain_text("Test prompt rq1")
+    record("reading: one-at-a-time mode keeps the stored order", True)
+    page.goto(base + "reading.html?passage=p2")
+    settle(page)
+    record("reading: paragraph numbers can be turned off",
+           page.locator(".passage-paragraphs").count() == 0 and page.locator(".passage-text p").inner_text() == "Only paragraph")
+    page.goto(base + "reading.html?unit=u2")
+    settle(page)
+    expect(page.locator(".empty-state h3")).to_have_text("No passages in this unit yet")
+    page.goto(base + "reading.html")
+    settle(page)
+    audit(page, "reading by unit")
+    no_errors(page, "phase 2 student pages")
+    context.close()
+
+    # Without data/units.json (a site uploaded before units existed) pages still work.
+    context = browser.new_context()
+    context.route("**/data/units.json", serve_json("Not found", status=404))
+    page = watch(context.new_page())
+    page.goto(base + "grammar.html")
+    settle(page)
+    expect(page.locator(".empty-state h2")).to_have_text("No lessons added yet")
+    page.errors = [e for e in page.errors if "units.json" not in e]
+    record("missing units.json is treated as 'no units'", page.locator(".error-state").count() == 0)
+    context.close()
+
+
+def phase2_manager(browser, base):
+    context = browser.new_context(accept_downloads=True)
+    page = watch(context.new_page())
+    page.on("dialog", lambda dialog: dialog.accept())
+    page.goto(base + "manage.html#units")
+    settle(page)
+    expect(page.locator(".empty-state h3")).to_have_text("No units added yet")
+    for title in ["Test unit A", "Test unit B"]:
+        page.click("text=Add a unit >> nth=0")
+        page.fill("#f-title", title)
+        page.click("button:has-text('Save unit')")
+        expect(page.locator(".manager-message")).to_contain_text("Unit “%s” saved." % title)
+    record("manager: units added", page.locator(".manager-row").count() == 2)
+    audit(page, "manager units list")
+
+    page.click(".manager-nav >> text=Lessons")
+    page.click("text=Add a lesson >> nth=0")
+    page.fill("#f-title", "Test topic A")
+    page.select_option("#f-unit", "test-unit-a")
+    page.click("button:has-text('Add section')")
+    page.fill("#sec-0-text", "Placeholder text.")
+    page.click("button:has-text('Save lesson')")
+    expect(page.locator(".manager-row-meta")).to_contain_text("Unit: Test unit A")
+
+    page.click(".manager-nav >> text=Grammar questions")
+    page.click("text=Add a question >> nth=0")
+    page.select_option("#f-topic", "test-topic-a")
+    record("manager: choosing a topic selects its unit", page.input_value("#f-unit") == "test-unit-a")
+    page.select_option("#f-unit", "test-unit-b")
+    page.fill("#f-prompt", "Linked prompt")
+    page.fill("#f-option-0", "X")
+    page.fill("#f-option-1", "Y")
+    page.check("#f-correct-0")
+    page.click("button:has-text('Save question')")
+    expect(page.locator(".error-summary")).to_contain_text("is in the unit “Test unit A”")
+    record("manager: a unit that disagrees with the topic is refused", page.get_attribute("#f-unit", "aria-invalid") == "true")
+    audit(page, "question editor with unit and topic")
+    page.select_option("#f-unit", "test-unit-a")
+    page.click("button:has-text('Save question')")
+    expect(page.locator(".manager-row")).to_have_count(1)
+    page.click("text=Add a question >> nth=0")
+    page.select_option("#f-topic", "")
+    page.select_option("#f-unit", "test-unit-b")
+    page.fill("#f-prompt", "Unit-only prompt")
+    page.fill("#f-option-0", "X")
+    page.fill("#f-option-1", "Y")
+    page.check("#f-correct-1")
+    page.click("button:has-text('Save question')")
+    library = draft(page)
+    q1, q2 = library["questions"]
+    record("manager: questions store topicId, and unitId only when there is no topic",
+           q1.get("topicId") == "test-topic-a" and "unitId" not in q1 and q2.get("unitId") == "test-unit-b" and "topicId" not in q2,
+           json.dumps(library["questions"]))
+    page.select_option("#filter-unit", "test-unit-b")
+    expect(page.locator(".manager-row")).to_have_count(1)
+    record("manager: questions can be filtered by unit", True)
+
+    page.click(".manager-nav >> text=Reading passages")
+    page.click("text=Add a passage >> nth=0")
+    page.fill("#f-title", "Test passage A")
+    page.select_option("#f-unit", "test-unit-a")
+    page.fill("#f-text", "Line 1\nLine 2\n\nSecond paragraph")
+    page.uncheck("#f-numbers")
+    page.click("button:has-text('Save passage')")
+    passage = draft(page)["passages"][0]
+    record("manager: passage keeps line breaks, unit and paragraph-number setting",
+           passage["paragraphs"] == ["Line 1\nLine 2", "Second paragraph"] and passage.get("unitId") == "test-unit-a"
+           and passage.get("showParagraphNumbers") is False, json.dumps(passage))
+
+    page.click(".manager-nav >> text=Units")
+    meta = page.locator(".manager-row-meta").first.inner_text()
+    record("manager: unit list shows what each unit contains", "1 lesson" in meta and "1 question" in meta and "1 passage" in meta, meta)
+    page.click("[aria-label='Edit unit “Test unit A”']")
+    page.fill("#f-id", "unit-a")
+    page.click("button:has-text('Save changes')")
+    library = draft(page)
+    record("manager: renaming a unit ID updates its lessons and passages",
+           library["lessons"][0]["unitId"] == "unit-a" and library["passages"][0]["unitId"] == "unit-a")
+    page.click("[data-id='test-unit-b'][data-action='delete']")
+    library = draft(page)
+    record("manager: deleting a unit keeps its content and removes the link",
+           len(library["units"]) == 1 and len(library["questions"]) == 2 and "unitId" not in library["questions"][1])
+
+    page.click(".manager-nav >> text=Import & export")
+    expect(page.locator("button:has-text('Download all five files')")).to_be_visible()
+    with page.expect_download() as info:
+        page.click("button:has-text('Download units.json')")
+    record("manager: units.json can be downloaded", info.value.suggested_filename == "units.json")
+    old_format = DOWNLOADS / "old-format-questions.json"
+    old_format.write_text(json.dumps({"schemaVersion": 1, "questions": [fixture_question("q-900", topic="test-topic-a")]}))
+    page.set_input_files("#import-files", str(old_format))
+    page.click("#import-result >> xpath=.. >> button:has-text('Import')")
+    expect(page.locator("#import-result")).to_contain_text("Import complete")
+    imported = [q for q in draft(page)["questions"] if q["id"] == "q-900"][0]
+    record("manager: importing a version 1 file upgrades its field names", imported.get("topicId") == "test-topic-a" and "topic" not in imported)
+    letter = DOWNLOADS / "letter-answer.json"
+    letter.write_text(json.dumps({"schemaVersion": 2, "questions": [fixture_question("q-901", answer="B")]}))
+    page.set_input_files("#import-files", str(letter))
+    page.click("#import-result >> xpath=.. >> button:has-text('Import')")
+    expect(page.locator("#import-result")).to_contain_text("looks like an option letter")
+    record("manager: an answer key written as a letter is rejected with a hint", True)
+    no_errors(page, "phase 2 manager")
+    context.close()
+
+
+# ---------------------------------------------------------------- 9. colour contrast
 
 def contrast():
     def luminance(hex_color):
@@ -827,6 +1118,8 @@ def main():
             run_section("import", import_flow, browser, base, backup)
         run_section("missing files and states", missing_files_and_states, browser, base)
         run_section("navigation", navigation, browser, base)
+        run_section("phase 2 student pages", phase2_pages, browser, base)
+        run_section("phase 2 content manager", phase2_manager, browser, base)
         browser.close()
     server.shutdown()
     contrast()
@@ -836,7 +1129,7 @@ def main():
     print("Screenshots: %s" % SHOTS)
     data_untouched = all(
         json.loads((PROJECT / "data" / f).read_text())[k] == []
-        for f, k in [("grammar-lessons.json", "lessons"), ("grammar-summaries.json", "summaries"),
+        for f, k in [("units.json", "units"), ("grammar-lessons.json", "lessons"), ("grammar-summaries.json", "summaries"),
                      ("grammar-questions.json", "questions"), ("reading-passages.json", "passages")])
     print("Project data files still empty after the test: %s" % data_untouched)
     sys.exit(0 if passed == len(results) else 1)

@@ -56,8 +56,30 @@
   };
 
   /**
-   * Loads the content collections a page needs, e.g. ['lessons', 'questions'].
-   * Resolves to { lessons: [...], questions: [...], skipped: <number> }.
+   * Loads one data file and returns its list (old field names upgraded).
+   * data/units.json is optional: if it is missing, there are simply no units
+   * (so a site uploaded before units existed keeps working).
+   */
+  G12.loadCollection = function (key) {
+    var Schema = G12.Schema;
+    var path = Schema.COLLECTIONS[key].path;
+    return G12.loadJSON(path).then(function (data) {
+      if (!data || !Array.isArray(data[key])) {
+        throw new Error('The file "' + path + '" must contain a "' + key + '" list. Check it with the content validator.');
+      }
+      return Schema.upgradeCollection(key, data[key]);
+    }, function (error) {
+      if (key === 'units' && /HTTP 404/.test(error.message)) {
+        console.warn('data/units.json was not found, so no units are shown.');
+        return [];
+      }
+      throw error;
+    });
+  };
+
+  /**
+   * Loads the content collections a page needs, e.g. ['units', 'lessons'].
+   * Resolves to { units: [...], lessons: [...], skipped: <number> }.
    * Broken items are left out and counted in "skipped".
    * In preview mode (switched on in the content manager) the browser draft
    * is used instead of the published files.
@@ -71,19 +93,13 @@
     if (draft) showPreviewBanner(storage);
 
     return Promise.all(keys.map(function (key) {
-      if (draft) return draft.library[key];
-      var path = Schema.COLLECTIONS[key].path;
-      return G12.loadJSON(path).then(function (data) {
-        if (!data || !Array.isArray(data[key])) {
-          throw new Error('The file "' + path + '" must contain a "' + key + '" list. Check it with the content validator.');
-        }
-        return data[key];
-      });
+      return draft ? draft.library[key] : G12.loadCollection(key);
     })).then(function (lists) {
-      var content = { skipped: 0 };
+      var content = { skipped: 0, skippedBy: {} };
       keys.forEach(function (key, i) {
         var usable = Schema.usableItems(key, lists[i]);
         content[key] = usable.items;
+        content.skippedBy[key] = usable.skipped + usable.skippedQuestions;
         content.skipped += usable.skipped + usable.skippedQuestions;
         if (usable.skipped || usable.skippedQuestions) {
           console.warn(key + ': skipped ' + usable.skipped + ' item(s) and ' + usable.skippedQuestions + ' passage question(s) with errors.');
@@ -247,8 +263,14 @@
     ]);
   };
 
-  /* Notice shown when some items in a data file were broken and left out. */
-  G12.skippedNotice = function (count) {
+  /* Notice shown when some items in a data file were broken and left out.
+     Pass a number, or the loaded content plus the collections the page shows:
+       G12.skippedNotice(content, ['units', 'lessons']) */
+  G12.skippedNotice = function (count, keys) {
+    if (count && typeof count === 'object') {
+      var byKey = count.skippedBy || {};
+      count = (keys || Object.keys(byKey)).reduce(function (sum, key) { return sum + (byKey[key] || 0); }, 0);
+    }
     if (!count) return null;
     return G12.el('div', { className: 'notice notice--demo', role: 'note' }, [
       G12.el('p', null, [
@@ -348,6 +370,55 @@
 
   G12.setupMenu();
   G12.watchSlowLoading();
+
+  /* ---------- Units ---------- */
+
+  /* Link to a page filtered to one unit, e.g. grammar.html?unit=unit-1 */
+  G12.unitHref = function (page, unitId) {
+    return unitId ? page + '?unit=' + encodeURIComponent(unitId) : page;
+  };
+
+  /**
+   * Row of links to filter a page by unit: "All units", then each unit.
+   * counts (optional): { unitId: number } shown after each unit title.
+   * Returns null when there are no units.
+   */
+  G12.unitNav = function (units, currentId, page, counts) {
+    if (!units || !units.length) return null;
+    var items = [G12.el('li', null, [G12.el('a', {
+      href: page,
+      'aria-current': currentId ? null : 'page',
+      text: 'All units'
+    })])];
+    units.forEach(function (unit) {
+      var count = counts && counts[unit.id] !== undefined ? counts[unit.id] : null;
+      items.push(G12.el('li', null, [G12.el('a', {
+        href: G12.unitHref(page, unit.id),
+        'aria-current': currentId === unit.id ? 'page' : null,
+        dir: 'auto'
+      }, [unit.title, count === null ? null : G12.el('span', { className: 'unit-nav-count', text: ' (' + count + ')' })])]));
+    });
+    return G12.el('nav', { className: 'unit-nav', 'aria-label': 'Units' }, [G12.el('ul', null, items)]);
+  };
+
+  /* Count items per unit id (items without a unit are not counted). */
+  G12.countByUnit = function (items, lessons) {
+    var counts = {};
+    (items || []).forEach(function (item) {
+      var unitId = G12.Schema.unitIdOf(item, lessons);
+      if (unitId) counts[unitId] = (counts[unitId] || 0) + 1;
+    });
+    return counts;
+  };
+
+  /* Message for a unit id in the address that does not exist. */
+  G12.unitNotFound = function (container, page, what) {
+    container.appendChild(G12.el('div', { className: 'empty-state' }, [
+      G12.el('h2', { text: 'Unit not found' }),
+      G12.el('p', { text: 'This unit does not exist or has been removed.' }),
+      G12.el('div', { className: 'actions' }, [G12.el('a', { className: 'btn', href: page, text: 'Show all ' + what })])
+    ]));
+  };
 
   /* ---------- Small utilities ---------- */
 

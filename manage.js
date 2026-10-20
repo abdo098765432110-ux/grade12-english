@@ -25,24 +25,29 @@
   var root = document.getElementById('page-root');
 
   var TYPES = {
+    units: {
+      title: 'Units', singular: 'unit', add: 'Add a unit',
+      help: 'Units group the lessons, summaries, practice questions and reading passages. They appear on the website in this order. Units are optional: without them, each page shows one list.',
+      empty: 'Add your first unit, or import a units file.'
+    },
     lessons: {
       title: 'Lessons', singular: 'lesson', add: 'Add a lesson',
-      help: 'Lessons appear on the Grammar Lessons page in this order.',
+      help: 'Each lesson is one grammar topic; its ID is the topic ID. Lessons appear in this order within their unit.',
       empty: 'Add your first grammar lesson, or import a lessons file.'
     },
     summaries: {
       title: 'Summaries', singular: 'summary', add: 'Add a summary',
-      help: 'Summaries appear on the Grammar Summaries page in this order. Link each summary to its lesson.',
+      help: 'Summaries appear in this order within their unit. Link each summary to its topic (lesson); it then belongs to that lesson’s unit.',
       empty: 'Add your first grammar summary, or import a summaries file.'
     },
     questions: {
       title: 'Grammar questions', singular: 'question', add: 'Add a question',
-      help: 'These questions are used on the Grammar Practice page. Link each question to a lesson so students can practise by topic.',
+      help: 'These questions are used on the Grammar Practice page. Link each question to a topic (lesson) or a unit so students can practise by unit and topic.',
       empty: 'Add your first practice question, or import a questions file.'
     },
     passages: {
       title: 'Reading passages', singular: 'passage', add: 'Add a passage',
-      help: 'Passages appear on the Reading page in this order. Each passage has its own questions.',
+      help: 'Passages appear on the Reading page in this order within their unit. Each passage has its own questions.',
       empty: 'Add your first reading passage, or import a passages file.'
     }
   };
@@ -72,7 +77,7 @@
   var flash = null;           // message to show after the next render
   var afterRender = null;     // focus callback after the next render
   var importReport = null;    // shown on the tools view after an import
-  var lastQuestionTopic = ''; // remembered for "Save and add another"
+  var lastQuestionLinks = {}; // unit and topic remembered for "Save and add another"
   var firstRender = true;
   var ui = {};
 
@@ -105,12 +110,8 @@
 
   function loadPublished() {
     return Promise.all(Schema.COLLECTION_KEYS.map(function (key) {
-      var path = Schema.COLLECTIONS[key].path;
-      return G12.loadJSON(path).then(function (data) {
-        if (!data || !Array.isArray(data[key])) {
-          throw new Error('"' + path + '" does not contain a "' + key + '" list.');
-        }
-        published[key] = data[key];
+      return G12.loadCollection(key).then(function (list) {
+        published[key] = list;
       }).catch(function (error) {
         publishedErrors.push(error.message);
       });
@@ -349,9 +350,15 @@
     return { row: row, control: control };
   }
 
+  /* opts.options: [{ value, label }] or groups [{ group: 'Label', options: [...] }] */
   function selectField(opts) {
-    var control = el('select', { id: opts.id }, opts.options.map(function (option) {
+    function optionNode(option) {
       return el('option', { value: option.value, text: option.label });
+    }
+    var control = el('select', { id: opts.id }, opts.options.map(function (option) {
+      return option.group
+        ? el('optgroup', { label: option.group }, option.options.map(optionNode))
+        : optionNode(option);
     }));
     control.value = opts.value || '';
     var hint = null;
@@ -485,41 +492,133 @@
     ui.view.appendChild(el('a', { className: 'btn', href: backHref, text: backLabel }));
   }
 
-  function lessonOptions(currentValue, noneLabel) {
-    var options = [{ value: '', label: noneLabel }].concat(library.lessons.map(function (lesson) {
-      return { value: lesson.id, label: lesson.title || lesson.id };
+  function unitTitle(id) {
+    var unit = G12.byId(library.units, id);
+    return unit ? (unit.title || unit.id) : (hasText(id) ? id + ' (not found)' : 'none');
+  }
+
+  function topicTitle(id) {
+    var lesson = G12.byId(library.lessons, id);
+    return lesson ? (lesson.title || lesson.id) : (hasText(id) ? id + ' (not found)' : 'none');
+  }
+
+  function unitSelectOptions(currentValue, noneLabel) {
+    var options = [{ value: '', label: noneLabel }].concat(library.units.map(function (unit) {
+      return { value: unit.id, label: unit.title || unit.id };
     }));
-    if (hasText(currentValue) && !G12.byId(library.lessons, currentValue)) {
-      options.push({ value: currentValue, label: currentValue + ' (lesson not found)' });
+    if (hasText(currentValue) && !G12.byId(library.units, currentValue)) {
+      options.push({ value: currentValue, label: currentValue + ' (unit not found)' });
     }
     return options;
   }
 
+  /* Topics (lessons) grouped by unit, for a <select> with <optgroup>s. */
+  function topicSelectOptions(currentValue, noneLabel) {
+    var options = [{ value: '', label: noneLabel }];
+    Schema.groupByUnit(library.lessons, library.units, library.lessons).forEach(function (group) {
+      if (!group.items.length) return;
+      var list = group.items.map(function (lesson) {
+        return { value: lesson.id, label: lesson.title || lesson.id };
+      });
+      if (library.units.length) options.push({ group: group.unit ? (group.unit.title || group.unit.id) : 'No unit', options: list });
+      else options = options.concat(list);
+    });
+    if (hasText(currentValue) && !G12.byId(library.lessons, currentValue)) {
+      options.push({ value: currentValue, label: currentValue + ' (topic not found)' });
+    }
+    return options;
+  }
+
+  /**
+   * Unit and (optionally) topic fields for an editor.
+   * Choosing a topic selects its unit. On save, read(errors) returns
+   * { unitId, topicId }; unitId is left out when it comes from the topic.
+   */
+  function unitTopicFields(item, withTopic, defaults) {
+    item = item || {};
+    defaults = defaults || {};
+    var startTopic = item.id ? item.topicId : defaults.topicId;
+    var startUnit = item.id ? (Schema.unitIdOf(item, library.lessons) || item.unitId) : defaults.unitId;
+    var unit = selectField({
+      id: 'f-unit', label: 'Unit', optional: true, value: startUnit,
+      options: unitSelectOptions(startUnit, '— No unit —'),
+      hint: library.units.length ? null : 'There are no units yet. Add units in the Units tab, or leave this empty.'
+    });
+    var topic = withTopic ? selectField({
+      id: 'f-topic', label: 'Topic (lesson)', optional: true, value: startTopic,
+      options: topicSelectOptions(startTopic, '— No topic —'),
+      hint: library.lessons.length ? 'Choosing a topic also chooses its unit.' : 'There are no lessons yet. You can link a topic later.'
+    }) : null;
+    if (topic) {
+      topic.control.addEventListener('change', function () {
+        var lesson = G12.byId(library.lessons, topic.control.value);
+        if (lesson && hasText(lesson.unitId)) unit.control.value = lesson.unitId;
+      });
+    }
+    return {
+      rows: topic ? [unit.row, topic.row] : [unit.row],
+      read: function (errors) {
+        var result = {};
+        var topicId = topic ? topic.control.value : '';
+        var unitId = unit.control.value;
+        var lesson = topicId ? G12.byId(library.lessons, topicId) : null;
+        if (topicId) result.topicId = topicId;
+        if (lesson && hasText(lesson.unitId)) {
+          if (unitId && unitId !== lesson.unitId) {
+            errors.push({ field: 'f-unit', message: 'The topic “' + (lesson.title || lesson.id) + '” is in the unit “' + unitTitle(lesson.unitId) + '”. Choose that unit, or another topic.' });
+          }
+        } else if (unitId) {
+          result.unitId = unitId;
+        }
+        return result;
+      }
+    };
+  }
+
   /* ---------- Lists ---------- */
+
+  /* How many items of each kind belong to a unit (directly or through their topic). */
+  function unitContents(unitId) {
+    var counts = {};
+    ['lessons', 'summaries', 'questions', 'passages'].forEach(function (key) {
+      counts[key] = library[key].filter(function (item) { return Schema.unitIdOf(item, library.lessons) === unitId; }).length;
+    });
+    return counts;
+  }
 
   function rowDetails(key, item) {
     var details = [];
     var count;
+    var unitLine = library.units.length ? 'Unit: ' + unitTitle(Schema.unitIdOf(item, library.lessons) || item.unitId) : null;
     switch (key) {
+      case 'units':
+        details.push('ID: ' + item.id);
+        var inUnit = unitContents(item.id);
+        details.push(G12.plural(inUnit.lessons, 'lesson'), G12.plural(inUnit.summaries, 'summary', 'summaries'),
+          G12.plural(inUnit.questions, 'question'), G12.plural(inUnit.passages, 'passage'));
+        return { title: item.title || item.id, meta: details.join(' · ') };
       case 'lessons':
         count = Array.isArray(item.sections) ? item.sections.length : 0;
-        details.push('ID: ' + item.id, G12.plural(count, 'section'));
+        details.push('ID: ' + item.id);
+        if (unitLine) details.push(unitLine);
+        details.push(G12.plural(count, 'section'));
         var links = Store.countLessonLinks(library, item.id);
         if (links.questions) details.push(G12.plural(links.questions, 'question'));
         return { title: item.title || item.id, meta: details.join(' · ') };
       case 'summaries':
-        var lesson = hasText(item.lessonId) ? G12.byId(library.lessons, item.lessonId) : null;
-        details.push('Lesson: ' + (lesson ? lesson.title : (hasText(item.lessonId) ? item.lessonId + ' (not found)' : 'none')));
+        if (unitLine) details.push(unitLine);
+        details.push('Topic: ' + topicTitle(item.topicId));
         details.push(G12.plural(Array.isArray(item.points) ? item.points.length : 0, 'point'));
         return { title: item.title || item.id, meta: details.join(' · ') };
       case 'questions':
         details.push(item.type === 'short' ? 'Short answer' : 'Multiple choice');
-        var topic = hasText(item.topic) ? G12.byId(library.lessons, item.topic) : null;
-        details.push('Topic: ' + (topic ? topic.title : (hasText(item.topic) ? item.topic + ' (not found)' : 'none')));
+        if (unitLine) details.push(unitLine);
+        details.push('Topic: ' + topicTitle(item.topicId));
         if (item.type === 'mcq' && hasText(item.answer)) details.push('Answer: ' + item.answer);
         details.push('ID: ' + item.id);
         return { title: item.prompt || item.id, meta: details.join(' · ') };
       case 'passages':
+        if (unitLine) details.push(unitLine);
         var paragraphs = Array.isArray(item.paragraphs) ? item.paragraphs : [];
         details.push(G12.plural(paragraphs.length, 'paragraph'), G12.plural(G12.wordCount(paragraphs), 'word'));
         details.push(G12.plural(Array.isArray(item.questions) ? item.questions.length : 0, 'question'));
@@ -599,19 +698,21 @@
     }
 
     var holder = el('div');
-    var filterState = { topic: '__all__', text: '' };
+    var filterState = { unit: '__all__', topic: '__all__', text: '' };
 
     function draw() {
       var shown = items;
       if (key === 'questions') {
         shown = items.filter(function (question) {
+          var unitId = Schema.unitIdOf(question, library.lessons);
+          var unitOk = filterState.unit === '__all__' || (filterState.unit === '' ? !unitId : unitId === filterState.unit);
           var topicOk = filterState.topic === '__all__' ||
-            (filterState.topic === '' ? !hasText(question.topic) : question.topic === filterState.topic);
+            (filterState.topic === '' ? !hasText(question.topicId) : question.topicId === filterState.topic);
           var textOk = !filterState.text || String(question.prompt || '').toLowerCase().indexOf(filterState.text) !== -1;
-          return topicOk && textOk;
+          return unitOk && topicOk && textOk;
         });
       }
-      var filtering = shown.length !== items.length || filterState.text || filterState.topic !== '__all__';
+      var filtering = shown.length !== items.length || filterState.text || filterState.topic !== '__all__' || filterState.unit !== '__all__';
       G12.clear(holder);
       if (filtering) {
         holder.appendChild(el('p', { className: 'hint', role: 'status', text: 'Showing ' + shown.length + ' of ' + items.length + ' questions. Clear the filters to reorder questions.' }));
@@ -633,6 +734,17 @@
     }
 
     if (key === 'questions') {
+      var filters = [];
+      if (library.units.length) {
+        var unitFilter = el('select', { id: 'filter-unit' }, [
+          el('option', { value: '__all__', text: 'All units' }),
+          el('option', { value: '', text: 'No unit' })
+        ].concat(library.units.map(function (unit) {
+          return el('option', { value: unit.id, text: unit.title || unit.id });
+        })));
+        unitFilter.addEventListener('change', function () { filterState.unit = unitFilter.value; draw(); });
+        filters.push(el('div', { className: 'form-row' }, [el('label', { for: 'filter-unit', text: 'Show unit' }), unitFilter]));
+      }
       var topicFilter = el('select', { id: 'filter-topic' }, [
         el('option', { value: '__all__', text: 'All topics' }),
         el('option', { value: '', text: 'No topic' })
@@ -642,10 +754,9 @@
       var search = el('input', { type: 'search', id: 'filter-text', autocomplete: 'off', dir: 'auto' });
       topicFilter.addEventListener('change', function () { filterState.topic = topicFilter.value; draw(); });
       search.addEventListener('input', function () { filterState.text = search.value.trim().toLowerCase(); draw(); });
-      ui.view.appendChild(el('div', { className: 'filters', role: 'search', 'aria-label': 'Filter questions' }, [
-        el('div', { className: 'form-row' }, [el('label', { for: 'filter-topic', text: 'Show topic' }), topicFilter]),
-        el('div', { className: 'form-row' }, [el('label', { for: 'filter-text', text: 'Search question text' }), search])
-      ]));
+      filters.push(el('div', { className: 'form-row' }, [el('label', { for: 'filter-topic', text: 'Show topic' }), topicFilter]));
+      filters.push(el('div', { className: 'form-row' }, [el('label', { for: 'filter-text', text: 'Search question text' }), search]));
+      ui.view.appendChild(el('div', { className: 'filters', role: 'search', 'aria-label': 'Filter questions' }, filters));
     }
 
     ui.view.appendChild(holder);
@@ -655,11 +766,20 @@
   function deleteFromList(key, item) {
     var info = rowDetails(key, item);
     var message = 'Delete the ' + TYPES[key].singular + ' “' + String(info.title).slice(0, 80) + '”?';
+    if (key === 'units') {
+      var inUnit = unitContents(item.id);
+      var total = inUnit.lessons + inUnit.summaries + inUnit.questions + inUnit.passages;
+      if (total) {
+        message += '\n\n' + G12.plural(inUnit.lessons, 'lesson') + ', ' + G12.plural(inUnit.summaries, 'summary', 'summaries') + ', ' +
+          G12.plural(inUnit.questions, 'question') + ' and ' + G12.plural(inUnit.passages, 'passage') +
+          ' are in this unit. They will be kept, but will no longer belong to a unit.';
+      }
+    }
     if (key === 'lessons') {
       var links = Store.countLessonLinks(library, item.id);
       if (links.questions || links.summaries) {
         message += '\n\n' + G12.plural(links.summaries, 'summary', 'summaries') + ' and ' + G12.plural(links.questions, 'question') +
-          ' are linked to this lesson. They will be kept, but no longer linked to it.';
+          ' are linked to this topic. They will be kept, but no longer linked to it.';
       }
     }
     if (key === 'passages' && Array.isArray(item.questions) && item.questions.length) {
@@ -678,7 +798,8 @@
       notFound(TYPES[key].singular.charAt(0).toUpperCase() + TYPES[key].singular.slice(1), '#' + key, 'Back to ' + TYPES[key].title.toLowerCase());
       return;
     }
-    if (key === 'lessons') lessonEditor(item);
+    if (key === 'units') unitEditor(item);
+    else if (key === 'lessons') lessonEditor(item);
     else if (key === 'summaries') summaryEditor(item);
     else if (key === 'questions') grammarQuestionEditor(item);
     else passageEditor(item);
@@ -717,8 +838,9 @@
     var otherIds = library.lessons.map(function (l) { return l.id; }).filter(function (id) { return !lesson || id !== lesson.id; });
     var frame = editorFrame(isNew ? 'Add a lesson' : 'Edit lesson: ' + (lesson.title || lesson.id), '#lessons', 'Back to lessons');
     var names = titleAndId(lesson, otherIds,
-      'Used in the lesson’s web address (grammar.html?lesson=your-id). Lowercase English letters, numbers and hyphens. Filled in from the title automatically.',
+      'This is the topic ID. It is used in the lesson’s web address (grammar.html?topic=your-id) and to link summaries and questions to this topic. Lowercase English letters, numbers and hyphens. Filled in from the title automatically.',
       'lesson');
+    var links = unitTopicFields(lesson, false);
     var description = textField({ id: 'f-description', label: 'Short description', optional: true, multiline: true, rows: 2, value: lesson && lesson.description, hint: 'Shown under the title in the list of lessons.' });
     var reviewed = checkboxField({
       id: 'f-reviewed',
@@ -727,7 +849,7 @@
       hint: 'Leave unticked until the lesson has been checked. Students see a “Not yet reviewed” label until then.'
     });
 
-    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Lesson details' })].concat(names.rows, [description.row, reviewed.row])));
+    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Lesson details' })].concat(names.rows, links.rows, [description.row, reviewed.row])));
 
     var drafts = (lesson && Array.isArray(lesson.sections) ? lesson.sections : []).map(sectionDraft);
     frame.form.appendChild(sectionsEditor(drafts));
@@ -738,7 +860,7 @@
       event.preventDefault();
       var errors = [];
       var base = names.read(errors);
-      var item = { id: base.id, title: base.title };
+      var item = Object.assign({ id: base.id }, links.read(errors), { title: base.title });
       if (hasText(description.control.value)) item.description = description.control.value.trim();
       item.reviewStatus = reviewStatusOf(reviewed.control);
       item.sections = drafts.map(sectionFromDraft);
@@ -753,10 +875,41 @@
         return;
       }
       var renamed = !isNew && lesson.id !== item.id;
-      var links = renamed ? Store.countLessonLinks(library, lesson.id) : null;
+      var linked = renamed ? Store.countLessonLinks(library, lesson.id) : null;
       commit(Store.saveItem(library, 'lessons', item, isNew ? null : lesson.id),
-        'Lesson “' + item.title + '” saved.' + (links && (links.questions || links.summaries) ? ' Its linked summaries and questions now use the new ID.' : ''));
+        'Lesson “' + item.title + '” saved.' + (linked && (linked.questions || linked.summaries) ? ' Its linked summaries and questions now use the new topic ID.' : ''));
       go('lessons');
+    });
+  }
+
+  /* ----- Unit ----- */
+
+  function unitEditor(unit) {
+    var isNew = !unit;
+    var otherIds = library.units.map(function (u) { return u.id; }).filter(function (id) { return !unit || id !== unit.id; });
+    var frame = editorFrame(isNew ? 'Add a unit' : 'Edit unit: ' + (unit.title || unit.id), '#units', 'Back to units');
+    var names = titleAndId(unit, otherIds,
+      'This is the unit ID. It is used in web addresses (for example grammar.html?unit=your-id) and to link content to this unit. Lowercase English letters, numbers and hyphens. Filled in from the title automatically.',
+      'unit');
+    var description = textField({ id: 'f-description', label: 'Short description', optional: true, multiline: true, rows: 2, value: unit && unit.description, hint: 'Shown under the unit title on the student pages.' });
+    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Unit details' })].concat(names.rows, [description.row])));
+    frame.form.appendChild(formActions([el('button', { type: 'submit', className: 'btn', text: isNew ? 'Save unit' : 'Save changes' })], '#units'));
+
+    frame.form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var errors = [];
+      var base = names.read(errors);
+      var item = { id: base.id, title: base.title };
+      if (hasText(description.control.value)) item.description = description.control.value.trim();
+      if (!errors.length) errors = schemaErrors('units', item);
+      if (errors.length) {
+        showErrors(frame, errors);
+        return;
+      }
+      var renamed = !isNew && unit.id !== item.id;
+      commit(Store.saveItem(library, 'units', item, isNew ? null : unit.id),
+        'Unit “' + item.title + '” saved.' + (renamed ? ' Content in this unit now uses the new unit ID.' : ''));
+      go('units');
     });
   }
 
@@ -1017,18 +1170,13 @@
     var names = titleAndId(summary, otherIds,
       'Used to link to this summary (summaries.html#your-id). Lowercase English letters, numbers and hyphens. Filled in from the title automatically.',
       'summary');
-    var lesson = selectField({
-      id: 'f-lesson', label: 'Linked lesson', optional: true,
-      value: summary && summary.lessonId,
-      options: lessonOptions(summary && summary.lessonId, '— No linked lesson —'),
-      hint: library.lessons.length ? 'Students can jump between a lesson and its summary.' : 'There are no lessons yet. You can link this summary to a lesson later.'
-    });
+    var links = unitTopicFields(summary, true);
     var reviewed = checkboxField({
       id: 'f-reviewed', label: 'A teacher has reviewed this summary',
       checked: summary && summary.reviewStatus === 'reviewed',
       hint: 'Leave unticked until the summary has been checked.'
     });
-    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Summary details' })].concat(names.rows, [lesson.row, reviewed.row])));
+    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Summary details' })].concat(names.rows, links.rows, [reviewed.row])));
 
     var points = (summary && Array.isArray(summary.points) ? summary.points : []).map(function (point) {
       point = point || {};
@@ -1060,8 +1208,7 @@
       event.preventDefault();
       var errors = [];
       var base = names.read(errors);
-      var item = { id: base.id, title: base.title };
-      if (hasText(lesson.control.value)) item.lessonId = lesson.control.value;
+      var item = Object.assign({ id: base.id }, links.read(errors), { title: base.title });
       item.reviewStatus = reviewStatusOf(reviewed.control);
       item.points = [];
       points.forEach(function (point, index) {
@@ -1180,18 +1327,10 @@
       prompt.row
     ];
 
-    var topic = null;
+    var links = null;
     if (ctx.mode === 'grammar') {
-      var defaultTopic = isNew ? lastQuestionTopic : q.topic;
-      topic = selectField({
-        id: 'f-topic', label: 'Topic (lesson)', optional: true,
-        value: defaultTopic,
-        options: lessonOptions(defaultTopic, '— No topic —'),
-        hint: library.lessons.length
-          ? 'On the practice page, questions are grouped by lesson.'
-          : 'There are no lessons yet. You can link this question to a lesson later.'
-      });
-      details.push(topic.row);
+      links = unitTopicFields(ctx.question, true, isNew ? lastQuestionLinks : null);
+      details = details.concat(links.rows);
     }
     frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Question' })].concat(details)));
 
@@ -1280,8 +1419,8 @@
       var promptText = prompt.control.value.trim();
       if (!promptText) errors.push({ field: 'f-prompt', message: 'Write the question.' });
 
-      var item = { id: isNew ? Schema.nextNumberedId('q', otherIds) : q.id, type: state.type };
-      if (topic && hasText(topic.control.value)) item.topic = topic.control.value;
+      var item = Object.assign({ id: isNew ? Schema.nextNumberedId('q', otherIds) : q.id, type: state.type },
+        links ? links.read(errors) : {});
       item.prompt = promptText;
 
       if (state.type === 'mcq') {
@@ -1319,7 +1458,9 @@
         showErrors(frame, errors);
         return;
       }
-      if (ctx.mode === 'grammar') lastQuestionTopic = item.topic || '';
+      if (ctx.mode === 'grammar') {
+        lastQuestionLinks = { unitId: Schema.unitIdOf(item, library.lessons), topicId: item.topicId || '' };
+      }
       ctx.save(item, isNew ? null : q.id);
       go(addAnother ? ctx.newHref : ctx.doneHref);
     });
@@ -1334,7 +1475,8 @@
     var names = titleAndId(passage, otherIds,
       'Used in the passage’s web address (reading.html?passage=your-id). Lowercase English letters, numbers and hyphens. Filled in from the title automatically.',
       'passage');
-    var level = textField({ id: 'f-level', label: 'Level', optional: true, value: passage && passage.level, hint: 'For example: Grade 12, or Unit 3.' });
+    var links = unitTopicFields(passage, false);
+    var level = textField({ id: 'f-level', label: 'Level', optional: true, value: passage && passage.level, hint: 'For example: Grade 12.' });
     var source = textField({
       id: 'f-source', label: 'Source or credit', optional: true, value: passage && passage.source,
       hint: 'Where the text comes from. Only publish texts you wrote yourself or have permission to use.'
@@ -1347,7 +1489,12 @@
     var text = textField({
       id: 'f-text', label: 'Passage text', required: true, multiline: true, rows: 14,
       value: passage && Array.isArray(passage.paragraphs) ? passage.paragraphs.join('\n\n') : '',
-      hint: 'Leave an empty line between paragraphs. Paragraphs are numbered on the website.'
+      hint: 'Leave an empty line between paragraphs. Line breaks and spacing inside a paragraph are shown exactly as typed.'
+    });
+    var numbers = checkboxField({
+      id: 'f-numbers', label: 'Show paragraph numbers',
+      checked: !passage || passage.showParagraphNumbers !== false,
+      hint: 'Numbers help when questions mention a paragraph. Untick to show the text without numbers.'
     });
     var count = el('p', { className: 'word-count', id: 'f-text-count' });
     function updateCount() {
@@ -1358,8 +1505,8 @@
     updateCount();
     text.row.appendChild(count);
 
-    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Passage details' })].concat(names.rows, [level.row, source.row, reviewed.row])));
-    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Text' }), text.row]));
+    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Passage details' })].concat(names.rows, links.rows, [level.row, source.row, reviewed.row])));
+    frame.form.appendChild(el('fieldset', { className: 'editor-block' }, [el('legend', { text: 'Text' }), text.row, numbers.row]));
     frame.form.appendChild(formActions([el('button', { type: 'submit', className: 'btn', text: isNew ? 'Save passage' : 'Save changes' })], '#passages'));
 
     frame.form.addEventListener('submit', function (event) {
@@ -1368,10 +1515,11 @@
       var base = names.read(errors);
       var paragraphs = Schema.splitParagraphs(text.control.value);
       if (!paragraphs.length) errors.push({ field: 'f-text', message: 'Write or paste the passage text.' });
-      var item = { id: base.id, title: base.title };
+      var item = Object.assign({ id: base.id }, links.read(errors), { title: base.title });
       if (hasText(level.control.value)) item.level = level.control.value.trim();
       if (hasText(source.control.value)) item.source = source.control.value.trim();
       item.reviewStatus = reviewStatusOf(reviewed.control);
+      if (!numbers.control.checked) item.showParagraphNumbers = false;
       item.paragraphs = paragraphs;
       item.questions = passage && Array.isArray(passage.questions) ? Schema.clone(passage.questions) : [];
       if (!errors.length) errors = schemaErrors('passages', item);
@@ -1488,19 +1636,19 @@
     publishButtons.unshift(el('button', {
       type: 'button',
       className: 'btn',
-      text: 'Download all four files',
+      text: 'Download all five files',
       onclick: function () {
         Schema.COLLECTION_KEYS.forEach(function (key, i) {
           setTimeout(function () { downloadCollection(key); }, i * 400);
         });
-        showMessage('Downloading the four data files. If your browser asks, allow it to download multiple files.');
+        showMessage('Downloading the five data files. If your browser asks, allow it to download multiple files.');
       }
     }));
     ui.view.appendChild(el('section', { className: 'tool-section', 'aria-labelledby': 'publish-heading' }, [
       el('h3', { id: 'publish-heading', text: 'Publish your changes' }),
       el('ol', { className: 'steps' }, [
-        el('li', { text: 'Download the four data files below.' }),
-        el('li', { text: 'In your GitHub repository, open the data folder, choose “Add file” → “Upload files”, and upload the files to replace the old ones. Then choose “Commit changes”.' }),
+        el('li', { text: 'Download the five data files below.' }),
+        el('li', { text: 'In your GitHub repository, open the data folder (not the top level), choose “Add file” → “Upload files”, and upload the files to replace the old ones. Then choose “Commit changes”.' }),
         el('li', { text: 'GitHub Pages updates the website, usually within a few minutes. Reload the website to check.' })
       ]),
       check.errors.length ? el('div', { className: 'notice notice--error', role: 'note' }, [
@@ -1513,8 +1661,9 @@
     ui.view.appendChild(el('section', { className: 'tool-section', 'aria-labelledby': 'check-heading' }, [
       el('h3', { id: 'check-heading', text: 'Check content' }),
       el('p', {
-        text: library.lessons.length + ' lessons, ' + library.summaries.length + ' summaries, ' + library.questions.length +
-          ' grammar questions and ' + library.passages.length + ' reading passages.'
+        text: G12.plural(library.units.length, 'unit') + ', ' + G12.plural(library.lessons.length, 'lesson') + ', ' +
+          G12.plural(library.summaries.length, 'summary', 'summaries') + ', ' + G12.plural(library.questions.length, 'grammar question') +
+          ' and ' + G12.plural(library.passages.length, 'reading passage') + '.'
       }),
       check.errors.length
         ? el('div', null, [el('p', null, [el('strong', { text: G12.plural(check.errors.length, 'error') + ' found:' })]), reportList(check.errors)])

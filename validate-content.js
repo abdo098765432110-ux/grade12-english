@@ -39,7 +39,7 @@ for (const key of Schema.COLLECTION_KEYS) {
   const fileReport = Schema.validateFile(key, data);
   report.errors.push(...fileReport.errors);
   report.warnings.push(...fileReport.warnings);
-  if (data && Array.isArray(data[key])) library[key] = data[key];
+  if (data && Array.isArray(data[key])) library[key] = Schema.upgradeCollection(key, data[key]);
 }
 
 Schema.checkLinks(library, report);

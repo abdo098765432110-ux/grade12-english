@@ -16,22 +16,23 @@ reading comprehension.
 ```
 grade12-english/
 ├── index.html             Home
-├── grammar.html           Grammar Lessons (list, or one lesson: ?lesson=<id>)
-├── summaries.html         Grammar Summaries
-├── practice.html          Grammar Practice (?topic=<lesson id> preselects a topic)
-├── reading.html           Reading Comprehension (list, or one passage: ?passage=<id>)
+├── grammar.html           Grammar Lessons   (?unit=<id> one unit, ?topic=<id> one lesson)
+├── summaries.html         Grammar Summaries (?unit=<id>, ?topic=<id>)
+├── practice.html          Grammar Practice  (?unit=<id>, ?topic=<id> preselect)
+├── reading.html           Reading Comprehension (?unit=<id>, ?passage=<id>)
 ├── manage.html            Content manager (for teachers)
 ├── .nojekyll              Empty file: tells GitHub Pages to serve files as they are
 ├── css/
 │   └── style.css          All styles
 ├── js/
-│   ├── content-schema.js  Data format and validation rules
+│   ├── content-schema.js  Data format, validation rules, units and topics
 │   ├── content-store.js   Add/edit/delete/move/import logic, browser drafts
-│   ├── common.js          Shared helpers: loading, empty and error states, menu
-│   ├── quiz-engine.js     Quiz rules (answers, retry, scoring)
-│   ├── quiz-ui.js         Quiz screens (used by Practice and Reading)
+│   ├── common.js          Shared helpers: data loading, unit links, empty and error states, menu
+│   ├── quiz-engine.js     Quiz rules: answer keys, scoring, unanswered questions
+│   ├── quiz-ui.js         Quiz screens: one at a time, or all questions then check
 │   └── home.js, grammar.js, summaries.js, practice.js, reading.js, manage.js
 ├── data/                  The content (empty to start)
+│   ├── units.json
 │   ├── grammar-lessons.json
 │   ├── grammar-summaries.json
 │   ├── grammar-questions.json
@@ -48,8 +49,8 @@ grade12-english/
 ```
 
 The website itself needs only the six `.html` files, `.nojekyll`, and the
-`css`, `js` and `data` folders. The other folders are documentation and
-tools; uploading them is recommended but does no harm either way.
+`css`, `js` and `data` **folders** — the files must stay inside them. The
+other folders are documentation and tools; uploading them is recommended.
 
 ## Publish on GitHub Pages
 
@@ -61,11 +62,17 @@ pages that keep saying “Loading…”) if `css`, `js` or `data` is missing. Se
    `index.html`, `css`, `js`, `data` and the other items.
 2. On GitHub, open your repository and choose **Add file → Upload files**.
 3. Select **everything** in the folder (Ctrl+A on Windows, Cmd+A on Mac) and
-   **drag it onto the upload area**. Do **not** use the “choose your files”
-   button: it cannot select folders.
-4. Before committing, scroll through the list of files and check that it
-   includes `css/style.css`, `js/common.js` and the `data/…json` files. Then
-   choose **Commit changes**.
+   **drag it onto the upload area**. The selection must include the
+   **folders** `css`, `js`, `data`, `docs`, `tools` and `tests` themselves —
+   not the files from inside them. Do **not** use the “choose your files”
+   button: it cannot select folders, and files chosen with it all land at the
+   top level, where the website cannot find them. Dragging folders works in
+   Chrome, Edge and Firefox on a computer, not on a phone.
+4. Before committing, scroll through the list of files and check that the
+   names include their folder: `css/style.css`, `js/common.js`,
+   `data/units.json`. If you see only `style.css` or `common.js`, the folders
+   were not included — cancel and drag the folders again. Then choose
+   **Commit changes**.
 5. The first time only: open **Settings → Pages**, choose **Deploy from a
    branch**, then branch `main` and folder `/ (root)`, and save.
 6. Wait 1–2 minutes and open `https://<user>.github.io/<repository>/`. If you
@@ -94,17 +101,18 @@ Then open <http://localhost:8000/>.
 
 Open `manage.html` (also linked at the bottom of every page).
 
-1. **Add and edit** lessons, summaries, grammar questions and reading
-   passages (with their questions). You can also delete items, reorder them,
-   filter questions by topic and search question text.
+1. **Add and edit** units, lessons (topics), summaries, grammar questions and
+   reading passages (with their questions). Link each item to its unit, and
+   summaries and questions to their topic. You can also delete items, reorder
+   them, filter questions by unit and topic, and search question text.
 2. Your work is **saved automatically as a draft in this browser** (on this
    device only). Nothing is sent anywhere.
 3. Tick **“Preview my draft on the student pages”** to see the draft on the
    real pages in your browser. Students do not see it.
-4. **Publish:** open *Import & export* and choose *Download all four files*.
-   Then, in your GitHub repository, open the `data` folder → **Add file →
-   Upload files**, upload the four files (they replace the old ones) and
-   commit.
+4. **Publish:** open *Import & export* and choose *Download all five files*.
+   Then, in your GitHub repository, **open the `data` folder first**, choose
+   **Add file → Upload files**, upload the five files (they replace the old
+   ones) and commit.
 5. **Back up** regularly with *Download backup file*. A backup (or any data
    file) can be **imported** on any computer. *Merge* adds new items and
    updates items with the same ID; *Replace* swaps the imported type

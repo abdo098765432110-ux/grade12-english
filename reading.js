@@ -1,23 +1,33 @@
-/* Reading Comprehension page: passage list, or one passage with its
-   questions when ?passage=<id> is in the URL. */
+/* Reading Comprehension page.
+     reading.html                 all passages, grouped by unit
+     reading.html?unit=<id>       the passages of one unit
+     reading.html?passage=<id>    one passage with its questions
+   Passage text keeps its paragraphs, line breaks and spacing exactly as
+   written, and questions are always shown in the order they are stored. */
 (function () {
   'use strict';
 
   var G12 = window.G12;
+  var Schema = G12.Schema;
   var el = G12.el;
-  var hasText = G12.Schema.hasText;
+  var hasText = Schema.hasText;
   var root = document.getElementById('page-root');
+  var PAGE = 'reading.html';
+  var MODES = [
+    { value: 'all', label: 'All questions' },
+    { value: 'one', label: 'One at a time' }
+  ];
 
-  G12.loadContent(['passages']).then(function (content) {
+  G12.loadContent(['units', 'passages']).then(function (content) {
     var id = G12.param('passage');
     if (id) renderPassage(content, id);
-    else renderList(content);
+    else renderList(content, G12.param('unit'));
   }).catch(function (error) {
     G12.showError(root, error, { title: 'Reading Comprehension' });
   });
 
   function passageLink(passage) {
-    return 'reading.html?passage=' + encodeURIComponent(passage.id);
+    return PAGE + '?passage=' + encodeURIComponent(passage.id);
   }
 
   function metaItems(passage) {
@@ -30,29 +40,10 @@
 
   /* ---------- Passage list ---------- */
 
-  function renderList(content) {
-    G12.setTitle('Reading Comprehension');
-    G12.clear(root);
-    root.appendChild(el('h1', { text: 'Reading Comprehension' }));
-    root.appendChild(el('p', { className: 'lead', text: 'Read a passage carefully, then answer the questions about it.' }));
-    var skipped = G12.skippedNotice(content.skipped);
-    if (skipped) root.appendChild(skipped);
-
-    if (content.passages.length === 0) {
-      root.appendChild(G12.emptyState(
-        'No reading passages added yet',
-        'Reading passages and their questions will appear here once they are added in the content manager.',
-        [{ label: 'Add a passage', href: G12.MANAGER_PAGE + '#passages/new' }]
-      ));
-      return;
-    }
-
-    var notice = G12.listReviewNotice(content.passages);
-    if (notice) root.appendChild(notice);
-
-    root.appendChild(el('ul', { className: 'card-grid' }, content.passages.map(function (passage) {
+  function passageCards(passages, headingLevel) {
+    return el('ul', { className: 'card-grid' }, passages.map(function (passage) {
       return el('li', { className: 'card' }, [
-        el('h2', { dir: 'auto' }, [el('a', { href: passageLink(passage), text: passage.title })]),
+        el(headingLevel, { dir: 'auto' }, [el('a', { href: passageLink(passage), text: passage.title })]),
         el('ul', { className: 'passage-meta' }, metaItems(passage).map(function (text) {
           return el('li', { text: text });
         })),
@@ -61,73 +52,169 @@
           el('a', { className: 'btn', href: passageLink(passage), text: 'Read passage', 'aria-label': 'Read passage: ' + passage.title })
         ])
       ]);
-    })));
+    }));
+  }
+
+  function renderList(content, unitId) {
+    G12.setTitle('Reading Comprehension');
+    G12.clear(root);
+    root.appendChild(el('h1', { text: 'Reading Comprehension' }));
+    root.appendChild(el('p', { className: 'lead', text: 'Read a passage carefully, then answer the questions about it.' }));
+    var skipped = G12.skippedNotice(content, ['units', 'passages']);
+    if (skipped) root.appendChild(skipped);
+
+    if (content.passages.length === 0 && content.units.length === 0) {
+      root.appendChild(G12.emptyState(
+        'No reading passages added yet',
+        'Reading passages and their questions will appear here once they are added in the content manager.',
+        [{ label: 'Add a passage', href: G12.MANAGER_PAGE + '#passages/new' }]
+      ));
+      return;
+    }
+
+    var nav = G12.unitNav(content.units, unitId, PAGE, G12.countByUnit(content.passages));
+    if (nav) root.appendChild(nav);
+    var groups = Schema.groupByUnit(content.passages, content.units, []);
+
+    if (unitId) {
+      var group = groups.filter(function (g) { return g.unit && g.unit.id === unitId; })[0];
+      if (!group) {
+        G12.unitNotFound(root, PAGE, 'passages');
+        return;
+      }
+      G12.setTitle(group.unit.title + ' — Reading Comprehension');
+      root.appendChild(el('h2', { dir: 'auto', text: group.unit.title }));
+      if (group.items.length === 0) {
+        root.appendChild(G12.emptyState(
+          'No passages in this unit yet',
+          'Reading passages for this unit will appear here once they are added in the content manager.',
+          [{ label: 'Show all units', href: PAGE }],
+          'h3'
+        ));
+        return;
+      }
+      var notice = G12.listReviewNotice(group.items);
+      if (notice) root.appendChild(notice);
+      root.appendChild(passageCards(group.items, 'h3'));
+      return;
+    }
+
+    var allNotice = G12.listReviewNotice(content.passages);
+    if (allNotice) root.appendChild(allNotice);
+    if (content.units.length === 0) {
+      root.appendChild(passageCards(content.passages, 'h2'));
+      return;
+    }
+    groups.forEach(function (g) {
+      var unit = g.unit;
+      var headingId = 'unit-' + (unit ? unit.id : 'other');
+      var section = el('section', { className: 'unit-section', 'aria-labelledby': headingId }, [
+        el('h2', { id: headingId, dir: 'auto' }, unit ? [el('a', { href: G12.unitHref(PAGE, unit.id), text: unit.title })] : ['Other passages'])
+      ]);
+      if (unit && hasText(unit.description)) section.appendChild(el('p', { className: 'unit-description', dir: 'auto', text: unit.description }));
+      section.appendChild(g.items.length
+        ? passageCards(g.items, 'h3')
+        : el('p', { className: 'unit-empty', text: 'No passages in this unit yet.' }));
+      root.appendChild(section);
+    });
   }
 
   /* ---------- One passage ---------- */
 
+  function passageText(passage) {
+    var paragraphs = passage.paragraphs.filter(hasText);
+    if (passage.showParagraphNumbers === false) {
+      return el('div', { className: 'passage-text' }, paragraphs.map(function (text) {
+        return el('p', { dir: 'auto', text: text });
+      }));
+    }
+    return el('ol', { className: 'passage-paragraphs', 'aria-label': 'Paragraphs' }, paragraphs.map(function (text) {
+      return el('li', { dir: 'auto', text: text });
+    }));
+  }
+
   function renderPassage(content, id) {
     G12.clear(root);
+    var ordered = Schema.orderByUnit(content.passages, content.units, []);
     var index = -1;
-    content.passages.forEach(function (passage, i) { if (passage.id === id) index = i; });
+    ordered.forEach(function (passage, i) { if (passage.id === id) index = i; });
 
     if (index === -1) {
       G12.setTitle('Passage not found');
       root.appendChild(el('h1', { text: 'Passage not found' }));
       root.appendChild(el('p', { text: 'This passage does not exist or has been removed.' }));
-      root.appendChild(el('a', { className: 'btn', href: 'reading.html', text: 'Back to all passages' }));
+      root.appendChild(el('a', { className: 'btn', href: PAGE, text: 'Back to all passages' }));
       return;
     }
 
-    var passage = content.passages[index];
+    var passage = ordered[index];
+    var unit = Schema.findById(content.units, passage.unitId);
     G12.setTitle(passage.title);
 
-    root.appendChild(el('nav', { className: 'breadcrumb', 'aria-label': 'Breadcrumb' }, [
-      el('ol', null, [
-        el('li', null, [el('a', { href: 'reading.html', text: 'Reading Comprehension' })]),
-        el('li', null, [el('span', { 'aria-current': 'page', dir: 'auto', text: passage.title })])
-      ])
-    ]));
+    var crumbs = [el('li', null, [el('a', { href: PAGE, text: 'Reading Comprehension' })])];
+    if (unit) crumbs.push(el('li', null, [el('a', { href: G12.unitHref(PAGE, unit.id), dir: 'auto', text: unit.title })]));
+    crumbs.push(el('li', null, [el('span', { 'aria-current': 'page', dir: 'auto', text: passage.title })]));
+    root.appendChild(el('nav', { className: 'breadcrumb', 'aria-label': 'Breadcrumb' }, [el('ol', null, crumbs)]));
     root.appendChild(el('h1', { dir: 'auto', text: passage.title }));
-    root.appendChild(G12.badges(passage));
+    root.appendChild(G12.badges(passage, [unit ? unit.title : null]));
     var notice = G12.reviewNotice(passage, 'passage and its questions');
     if (notice) root.appendChild(notice);
-    var skipped = G12.skippedNotice(content.skipped);
+    var skipped = G12.skippedNotice(content, ['units', 'passages']);
     if (skipped) root.appendChild(skipped);
 
-    var article = el('article', { className: 'passage', 'aria-labelledby': 'passage-heading' }, [
+    var article = el('article', { className: 'passage', 'aria-labelledby': 'passage-heading', tabindex: '0' }, [
       el('h2', { id: 'passage-heading', text: 'Passage' }),
       el('ul', { className: 'passage-meta' }, metaItems(passage).map(function (text) {
         return el('li', { text: text });
       })),
-      el('ol', { className: 'passage-paragraphs', 'aria-label': 'Paragraphs' }, passage.paragraphs.filter(hasText).map(function (text) {
-        return el('li', { dir: 'auto', text: text });
-      })),
+      passageText(passage),
       hasText(passage.source) ? el('p', { className: 'passage-source', dir: 'auto', text: 'Source: ' + passage.source }) : null
     ]);
 
     var questionColumn = el('div', { className: 'reading-questions' });
-    var layout = el('div', { className: 'reading-layout' }, [article, questionColumn]);
-    root.appendChild(layout);
+    root.appendChild(el('div', { className: 'reading-layout' }, [article, questionColumn]));
 
     if (passage.questions.length === 0) {
       questionColumn.appendChild(el('div', { className: 'quiz' }, [
         el('h2', { text: 'Questions' }),
-        el('p', { text: 'No questions have been added to this passage yet.' }),
-        el('a', { className: 'btn btn--secondary', href: G12.MANAGER_PAGE + '#passages/edit/' + encodeURIComponent(passage.id), text: 'Add questions' })
+        el('p', { text: 'No questions have been added to this passage yet.' })
       ]));
     } else {
-      G12.renderQuiz(questionColumn, passage.questions, {
-        label: 'Questions about ' + passage.title,
-        shuffle: false
-      });
+      renderQuestions(questionColumn, passage, 'all', false);
     }
 
-    var previous = content.passages[index - 1];
-    var next = content.passages[index + 1];
+    var previous = ordered[index - 1];
+    var next = ordered[index + 1];
     root.appendChild(el('nav', { className: 'pager', 'aria-label': 'Other passages' }, [
       previous ? el('a', { href: passageLink(previous), dir: 'auto', text: '← ' + previous.title }) : el('span'),
       next ? el('a', { href: passageLink(next), dir: 'auto', text: next.title + ' →' }) : el('span')
     ]));
+  }
+
+  /* Questions in their stored order, either all together or one at a time. */
+  function renderQuestions(column, passage, mode, moveFocus) {
+    G12.clear(column);
+    var switcher = el('div', { className: 'mode-switch', role: 'group', 'aria-label': 'How to answer the questions' },
+      MODES.map(function (option) {
+        return el('button', {
+          type: 'button',
+          className: 'btn btn--secondary btn--small',
+          'aria-pressed': String(option.value === mode),
+          text: option.label,
+          onclick: function () {
+            if (option.value !== mode) renderQuestions(column, passage, option.value, true);
+          }
+        });
+      }));
+    var holder = el('div');
+    column.appendChild(switcher);
+    column.appendChild(holder);
+    var label = 'Questions about ' + passage.title;
+    if (mode === 'one') {
+      G12.renderQuiz(holder, passage.questions, { label: label, shuffle: false });
+    } else {
+      G12.renderWorksheet(holder, passage.questions, { label: label, title: 'Questions' });
+    }
+    if (moveFocus) G12.focus(holder.querySelector('h2'));
   }
 })();

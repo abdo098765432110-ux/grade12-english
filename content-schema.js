@@ -9,6 +9,13 @@
    Errors   = the item is broken and cannot be used.
    Warnings = the item works but is incomplete or has a broken link.
    See docs/CONTENT_FORMAT.md for the human-readable description.
+
+   How content is organised
+     Unit   — data/units.json. A unit groups everything else.
+     Topic  — one grammar lesson. A topic's ID is the lesson's "id".
+     Every lesson, summary, question and passage can name its unit with
+     "unitId". Summaries and practice questions can name their topic with
+     "topicId"; they then belong to that lesson's unit automatically.
    ========================================================================== */
 (function (root, factory) {
   var api = factory();
@@ -21,10 +28,16 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var SCHEMA_VERSION = 1;
+  /* Version 2 added units, "unitId" and "topicId". Version 1 files still
+     load: their old field names are converted automatically (see upgradeItem). */
+  var SCHEMA_VERSION = 2;
 
-  /* The four content collections and the data file each one lives in. */
+  /* The content collections and the data file each one lives in. */
   var COLLECTIONS = {
+    units: {
+      key: 'units', path: 'data/units.json', fileName: 'units.json',
+      label: 'Units', singular: 'Unit'
+    },
     lessons: {
       key: 'lessons', path: 'data/grammar-lessons.json', fileName: 'grammar-lessons.json',
       label: 'Grammar lessons', singular: 'Lesson'
@@ -42,7 +55,7 @@
       label: 'Reading passages', singular: 'Passage'
     }
   };
-  var COLLECTION_KEYS = ['lessons', 'summaries', 'questions', 'passages'];
+  var COLLECTION_KEYS = ['units', 'lessons', 'summaries', 'questions', 'passages'];
 
   var REVIEW_STATUSES = ['unreviewed', 'reviewed'];
   var SECTION_TYPES = ['text', 'note', 'list', 'examples', 'table', 'mistakes'];
@@ -52,6 +65,13 @@
   var ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
   var MIN_OPTIONS = 2;
   var MAX_OPTIONS = 6;
+  var LETTERS = 'ABCDEF';
+
+  /* Old field name → new field name, per collection (version 1 → 2). */
+  var RENAMED_FIELDS = {
+    summaries: { lessonId: 'topicId' },
+    questions: { topic: 'topicId' }
+  };
 
   /* ---------- Small helpers ---------- */
 
@@ -64,7 +84,7 @@
   }
 
   function emptyLibrary() {
-    return { lessons: [], summaries: [], questions: [], passages: [] };
+    return { units: [], lessons: [], summaries: [], questions: [], passages: [] };
   }
 
   function clone(value) {
@@ -95,13 +115,48 @@
   Report.prototype.warn = function (where, message) { this.warnings.push(where + ': ' + message); };
   Report.prototype.ok = function () { return this.errors.length === 0; };
 
+  /* ---------- Upgrading old field names ---------- */
+
+  /**
+   * Returns a copy of the item using the current field names. Old names are
+   * moved to the new name (unless the new one is already set) and removed.
+   * Pass a list as "renamed" to collect the old names that were found.
+   */
+  function upgradeItem(key, item, renamed) {
+    var map = RENAMED_FIELDS[key];
+    if (!map || !isObject(item)) return item;
+    var copy = clone(item);
+    Object.keys(map).forEach(function (oldName) {
+      if (copy[oldName] === undefined) return;
+      var newName = map[oldName];
+      if (copy[newName] === undefined || copy[newName] === '') copy[newName] = copy[oldName];
+      delete copy[oldName];
+      if (renamed && renamed.indexOf(oldName) === -1) renamed.push(oldName);
+    });
+    return copy;
+  }
+
+  function upgradeCollection(key, items, renamed) {
+    if (!Array.isArray(items)) return items;
+    return items.map(function (item) { return upgradeItem(key, item, renamed); });
+  }
+
   /* ---------- Shared field checks ---------- */
 
   function checkId(item, report, where) {
     if (!hasText(item.id)) {
       report.error(where, 'id is missing.');
     } else if (!ID_PATTERN.test(item.id)) {
-      report.error(where, 'id “' + item.id + '” may only contain lowercase English letters, numbers and single hyphens (for example: passive-voice).');
+      report.error(where, 'id “' + item.id + '” may only contain lowercase English letters, numbers and single hyphens (for example: unit-1 or passive-voice).');
+    }
+  }
+
+  /* Optional link to another item (unitId, topicId): empty, or a valid id. */
+  function checkLinkId(item, field, report, where) {
+    var value = item[field];
+    if (value === undefined || value === '') return;
+    if (typeof value !== 'string' || !ID_PATTERN.test(value)) {
+      report.error(where, field + ' “' + value + '” is not a valid id (lowercase English letters, numbers and single hyphens).');
     }
   }
 
@@ -148,7 +203,19 @@
     });
   }
 
-  /* ---------- Lessons ---------- */
+  /* ---------- Units ---------- */
+
+  function validateUnit(unit, report, where) {
+    if (!isObject(unit)) {
+      report.error(where, 'must be an object.');
+      return;
+    }
+    checkId(unit, report, where);
+    checkRequiredText(unit, 'title', report, where);
+    checkOptionalText(unit, 'description', report, where);
+  }
+
+  /* ---------- Lessons (topics) ---------- */
 
   function validateSection(section, report, where) {
     if (!isObject(section)) {
@@ -215,6 +282,7 @@
     checkId(lesson, report, where);
     checkRequiredText(lesson, 'title', report, where);
     checkOptionalText(lesson, 'description', report, where);
+    checkLinkId(lesson, 'unitId', report, where);
     checkReviewStatus(lesson, report, where);
     if (!Array.isArray(lesson.sections)) {
       report.error(where, 'sections must be a list (it can be empty while you are still writing).');
@@ -236,10 +304,9 @@
     }
     checkId(summary, report, where);
     checkRequiredText(summary, 'title', report, where);
+    checkLinkId(summary, 'unitId', report, where);
+    checkLinkId(summary, 'topicId', report, where);
     checkReviewStatus(summary, report, where);
-    if (summary.lessonId !== undefined && summary.lessonId !== '' && !ID_PATTERN.test(String(summary.lessonId))) {
-      report.error(where, 'lessonId is not a valid lesson id.');
-    }
     var pointCount = 0;
     if (summary.points !== undefined) {
       if (!Array.isArray(summary.points)) {
@@ -270,6 +337,44 @@
 
   /* ---------- Questions (grammar practice and reading) ---------- */
 
+  /* Explains why a multiple-choice answer key does not match, with a hint. */
+  function answerKeyProblem(question) {
+    var options = question.options;
+    var answer = question.answer;
+    if (answer === undefined || answer === null || answer === '') {
+      return 'answer is missing. Write the full text of the correct option, exactly as it appears in "options".';
+    }
+    if (typeof answer === 'number') {
+      var byNumber = options[answer - 1];
+      return 'answer is the number ' + answer + '. Write the full text of the correct option instead' +
+        (hasText(byNumber) ? ' (option ' + answer + ' is “' + shorten(byNumber, 40) + '”).' : '.');
+    }
+    if (typeof answer !== 'string') {
+      return 'answer must be the text of the correct option.';
+    }
+    if (options.indexOf(answer) !== -1) return null;
+    var trimmed = answer.trim().toLowerCase();
+    var near = options.filter(function (option) {
+      return typeof option === 'string' && option.trim().toLowerCase() === trimmed;
+    })[0];
+    if (near !== undefined) {
+      return 'answer “' + shorten(answer, 40) + '” differs from the option “' + shorten(near, 40) + '” only in spaces or capital letters. It must match exactly.';
+    }
+    var letter = /^\s*\(?([A-Fa-f])[).]?\s*$/.exec(answer);
+    if (letter) {
+      var byLetter = options[LETTERS.indexOf(letter[1].toUpperCase())];
+      return 'answer “' + answer.trim() + '” looks like an option letter. Write the full text of the correct option instead' +
+        (hasText(byLetter) ? ' (option ' + letter[1].toUpperCase() + ' is “' + shorten(byLetter, 40) + '”).' : '.');
+    }
+    var digits = /^\s*(\d+)\s*$/.exec(answer);
+    if (digits) {
+      var byDigits = options[Number(digits[1]) - 1];
+      return 'answer “' + answer.trim() + '” looks like an option number. Write the full text of the correct option instead' +
+        (hasText(byDigits) ? ' (option ' + digits[1] + ' is “' + shorten(byDigits, 40) + '”).' : '.');
+    }
+    return 'answer “' + shorten(answer, 40) + '” does not exactly match any option.';
+  }
+
   function validateQuestion(question, report, where) {
     if (!isObject(question)) {
       report.error(where, 'must be an object.');
@@ -279,7 +384,8 @@
     checkRequiredText(question, 'prompt', report, where);
     checkReviewStatus(question, report, where);
     checkOptionalText(question, 'explanation', report, where);
-    checkOptionalText(question, 'topic', report, where);
+    checkLinkId(question, 'unitId', report, where);
+    checkLinkId(question, 'topicId', report, where);
     if (question.difficulty !== undefined && DIFFICULTIES.indexOf(question.difficulty) === -1) {
       report.error(where, 'difficulty must be "easy", "medium" or "hard" (or left out).');
     }
@@ -306,11 +412,8 @@
       if (duplicate.length) {
         report.error(where, 'the option “' + shorten(duplicate[0], 40) + '” appears more than once.');
       }
-      if (!hasText(question.answer)) {
-        report.error(where, 'answer is required: copy the text of the correct option exactly.');
-      } else if (options.indexOf(question.answer) === -1) {
-        report.error(where, 'answer “' + shorten(question.answer, 40) + '” does not exactly match any option.');
-      }
+      var problem = answerKeyProblem(question);
+      if (problem) report.error(where, problem);
     } else {
       checkRequiredText(question, 'modelAnswer', report, where);
     }
@@ -327,7 +430,11 @@
     checkRequiredText(passage, 'title', report, where);
     checkOptionalText(passage, 'level', report, where);
     checkOptionalText(passage, 'source', report, where);
+    checkLinkId(passage, 'unitId', report, where);
     checkReviewStatus(passage, report, where);
+    if (passage.showParagraphNumbers !== undefined && typeof passage.showParagraphNumbers !== 'boolean') {
+      report.error(where, 'showParagraphNumbers must be true or false.');
+    }
     checkTextList(passage.paragraphs, 'paragraphs', report, where, 1);
     if (!Array.isArray(passage.questions)) {
       report.error(where, 'questions must be a list (it can be empty).');
@@ -345,6 +452,7 @@
   /* ---------- Collections and the whole library ---------- */
 
   var ITEM_VALIDATORS = {
+    units: validateUnit,
     lessons: validateLesson,
     summaries: validateSummary,
     questions: validateQuestion,
@@ -381,29 +489,55 @@
     return report;
   }
 
-  /* Warns about summaries and questions linked to lessons that do not exist. */
+  function idsOf(list) {
+    return (list || []).filter(isObject).map(function (item) { return item.id; });
+  }
+
+  /* Warns about links to units or topics that do not exist, and about items
+     whose unitId disagrees with the unit of their topic. */
   function checkLinks(library, report) {
     report = report || new Report();
-    var lessonIds = (library.lessons || []).filter(isObject).map(function (lesson) { return lesson.id; });
-    (library.summaries || []).forEach(function (summary, index) {
-      if (isObject(summary) && hasText(summary.lessonId) && lessonIds.indexOf(summary.lessonId) === -1) {
-        report.warn(describe('Summary', index, summary), 'is linked to the lesson id “' + summary.lessonId + '”, but no lesson has that id.');
+    var unitIds = idsOf(library.units);
+    var lessons = (library.lessons || []).filter(isObject);
+    var lessonIds = idsOf(lessons);
+
+    function checkUnit(item, where) {
+      if (hasText(item.unitId) && unitIds.indexOf(item.unitId) === -1) {
+        report.warn(where, 'has the unitId “' + item.unitId + '”, but no unit has that id. It will be shown under “Other”.');
       }
+    }
+
+    function checkTopic(item, where) {
+      if (!hasText(item.topicId)) return;
+      var lesson = lessons[lessonIds.indexOf(item.topicId)];
+      if (!lesson) {
+        report.warn(where, 'has the topicId “' + item.topicId + '”, but no lesson has that id.');
+      } else if (hasText(item.unitId) && hasText(lesson.unitId) && item.unitId !== lesson.unitId) {
+        report.warn(where, 'has the unitId “' + item.unitId + '”, but its topic “' + item.topicId + '” is in the unit “' + lesson.unitId + '”. The topic’s unit is used.');
+      }
+    }
+
+    lessons.forEach(function (lesson, index) { checkUnit(lesson, describe('Lesson', index, lesson)); });
+    ['summaries', 'questions'].forEach(function (key) {
+      (library[key] || []).forEach(function (item, index) {
+        if (!isObject(item)) return;
+        var where = describe(COLLECTIONS[key].singular, index, item);
+        checkUnit(item, where);
+        checkTopic(item, where);
+      });
     });
-    (library.questions || []).forEach(function (question, index) {
-      if (isObject(question) && hasText(question.topic) && lessonIds.indexOf(question.topic) === -1) {
-        report.warn(describe('Question', index, question), 'has the topic “' + question.topic + '”, but no lesson has that id. It will be listed under “Other questions”.');
-      }
+    (library.passages || []).forEach(function (passage, index) {
+      if (isObject(passage)) checkUnit(passage, describe('Passage', index, passage));
     });
     return report;
   }
 
-  /* Checks the outer shape of one data file: { "schemaVersion": 1, "lessons": [...] } */
+  /* Checks the outer shape of one data file: { "schemaVersion": 2, "lessons": [...] } */
   function validateFile(key, data) {
     var report = new Report();
     var label = COLLECTIONS[key].fileName;
     if (!isObject(data)) {
-      report.error(label, 'must contain a JSON object such as { "schemaVersion": 1, "' + key + '": [] }.');
+      report.error(label, 'must contain a JSON object such as { "schemaVersion": ' + SCHEMA_VERSION + ', "' + key + '": [] }.');
       return report;
     }
     checkSchemaVersion(data, report, label);
@@ -411,22 +545,31 @@
       report.error(label, 'must contain a "' + key + '" list.');
       return report;
     }
-    validateCollection(key, data[key], report);
+    var renamed = [];
+    validateCollection(key, upgradeCollection(key, data[key], renamed), report);
+    noteRenamed(renamed, key, report, label);
     return report;
+  }
+
+  function noteRenamed(renamed, key, report, label) {
+    renamed.forEach(function (oldName) {
+      report.warn(label, 'uses the old field name "' + oldName + '"; it is read as "' + RENAMED_FIELDS[key][oldName] +
+        '". Saving or exporting from the content manager updates the file.');
+    });
   }
 
   function checkSchemaVersion(data, report, label) {
     if (data.schemaVersion === undefined) {
       report.warn(label, 'schemaVersion is missing; version ' + SCHEMA_VERSION + ' is assumed.');
-    } else if (typeof data.schemaVersion !== 'number' || data.schemaVersion > SCHEMA_VERSION) {
-      report.error(label, 'schemaVersion ' + JSON.stringify(data.schemaVersion) + ' is not supported by this version of the website (expected ' + SCHEMA_VERSION + ').');
+    } else if (typeof data.schemaVersion !== 'number' || data.schemaVersion > SCHEMA_VERSION || data.schemaVersion < 1) {
+      report.error(label, 'schemaVersion ' + JSON.stringify(data.schemaVersion) + ' is not supported by this version of the website (expected 1 or ' + SCHEMA_VERSION + ').');
     }
   }
 
   /**
    * Reads an imported JSON object. Accepts a single data file (for example
    * { "lessons": [...] }) or a full backup containing several collections.
-   * Returns { collections: { lessons: [...] , ... }, report }.
+   * Old field names are upgraded. Returns { collections: {...}, report }.
    */
   function readImport(data, sourceName) {
     var report = new Report();
@@ -442,12 +585,14 @@
         if (!Array.isArray(data[key])) {
           report.error(label, '"' + key + '" must be a list.');
         } else {
-          collections[key] = clone(data[key]);
+          var renamed = [];
+          collections[key] = upgradeCollection(key, clone(data[key]), renamed);
+          noteRenamed(renamed, key, report, label);
         }
       }
     });
     if (Object.keys(collections).length === 0 && report.errors.length === 0) {
-      report.error(label, 'does not contain lessons, summaries, questions or passages.');
+      report.error(label, 'does not contain units, lessons, summaries, questions or passages.');
     }
     return { collections: collections, report: report };
   }
@@ -458,12 +603,13 @@
    * Returns only the items that can be shown safely. Broken items are left
    * out (and counted) so one mistake in a file cannot break a whole page.
    * For passages, broken questions are removed but the passage is kept.
+   * Old field names are upgraded first.
    */
   function usableItems(key, items) {
     var result = { items: [], skipped: 0, skippedQuestions: 0 };
     if (!Array.isArray(items)) return result;
     var usedIds = {};
-    items.forEach(function (item, index) {
+    upgradeCollection(key, items).forEach(function (item, index) {
       var candidate = item;
       if (key === 'passages' && isObject(item) && Array.isArray(item.questions)) {
         candidate = clone(item);
@@ -484,6 +630,59 @@
       }
     });
     return result;
+  }
+
+  /* ---------- Units and topics ---------- */
+
+  function findById(list, id) {
+    for (var i = 0; i < (list || []).length; i++) {
+      if (list[i] && list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  /**
+   * The unit an item belongs to: the unit of its topic (lesson) if it has
+   * one, otherwise its own unitId. Returns '' when it has no unit.
+   */
+  function unitIdOf(item, lessons) {
+    if (!isObject(item)) return '';
+    if (hasText(item.topicId)) {
+      var lesson = findById(lessons, item.topicId);
+      if (lesson && hasText(lesson.unitId)) return lesson.unitId;
+    }
+    return hasText(item.unitId) ? item.unitId : '';
+  }
+
+  /**
+   * Groups items by unit, in the order of the units list. Every unit gets a
+   * group (possibly empty, so pages can show "nothing here yet"). Items with
+   * no unit, or an unknown unit, go in a final group with unit: null, which
+   * is only included when it has items.
+   *   groupByUnit(items, units, lessons) → [{ unit, items }, ...]
+   */
+  function groupByUnit(items, units, lessons) {
+    var groups = (units || []).map(function (unit) { return { unit: unit, items: [] }; });
+    var other = { unit: null, items: [] };
+    (items || []).forEach(function (item) {
+      var unitId = unitIdOf(item, lessons);
+      var group = null;
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].unit.id === unitId) group = groups[i];
+      }
+      (group || other).items.push(item);
+    });
+    if (other.items.length) groups.push(other);
+    return groups;
+  }
+
+  /* All items in display order: unit by unit, then items without a unit. */
+  function orderByUnit(items, units, lessons) {
+    var ordered = [];
+    groupByUnit(items, units, lessons).forEach(function (group) {
+      ordered.push.apply(ordered, group.items);
+    });
+    return ordered;
   }
 
   /* ---------- ID helpers ---------- */
@@ -524,7 +723,8 @@
 
   /* ---------- Text helpers for editor fields ---------- */
 
-  /* Paragraphs are separated by one or more blank lines. */
+  /* Paragraphs are separated by one or more blank lines. Single line breaks
+     inside a paragraph are kept (the website shows them as line breaks). */
   function splitParagraphs(text) {
     return String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n/).map(function (part) {
       return part.trim();
@@ -560,10 +760,14 @@
     ID_PATTERN: ID_PATTERN,
     MIN_OPTIONS: MIN_OPTIONS,
     MAX_OPTIONS: MAX_OPTIONS,
+    RENAMED_FIELDS: RENAMED_FIELDS,
     Report: Report,
     emptyLibrary: emptyLibrary,
     clone: clone,
     hasText: hasText,
+    upgradeItem: upgradeItem,
+    upgradeCollection: upgradeCollection,
+    answerKeyProblem: answerKeyProblem,
     validateItem: validateItem,
     validateCollection: validateCollection,
     validateLibrary: validateLibrary,
@@ -571,6 +775,10 @@
     validateFile: validateFile,
     readImport: readImport,
     usableItems: usableItems,
+    findById: findById,
+    unitIdOf: unitIdOf,
+    groupByUnit: groupByUnit,
+    orderByUnit: orderByUnit,
     slugify: slugify,
     uniqueId: uniqueId,
     nextNumberedId: nextNumberedId,

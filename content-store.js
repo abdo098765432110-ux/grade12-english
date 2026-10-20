@@ -19,10 +19,14 @@
   var PREVIEW_KEY = 'g12-preview-draft';
   var BACKUP_TYPE = 'grade12-english-backup';
 
+  /* A full copy of the library with every collection present and old
+     (version 1) field names upgraded. */
   function normalizeLibrary(library) {
     var result = Schema.emptyLibrary();
     Schema.COLLECTION_KEYS.forEach(function (key) {
-      result[key] = Array.isArray(library && library[key]) ? Schema.clone(library[key]) : [];
+      result[key] = Array.isArray(library && library[key])
+        ? Schema.upgradeCollection(key, Schema.clone(library[key]))
+        : [];
     });
     return result;
   }
@@ -48,9 +52,22 @@
 
   /* ---------- Editing ---------- */
 
+  /* Collections whose items can point at a unit (unitId) or a topic (topicId). */
+  var UNIT_LINKED = ['lessons', 'summaries', 'questions', 'passages'];
+  var TOPIC_LINKED = ['summaries', 'questions'];
+
+  /* Calls change(item) for every item whose field equals id. */
+  function eachLinked(library, keys, field, id, change) {
+    keys.forEach(function (key) {
+      library[key].forEach(function (item) {
+        if (item && item[field] === id) change(item);
+      });
+    });
+  }
+
   /**
    * Adds a new item, or replaces the item whose id was originalId.
-   * When a lesson id changes, linked summaries and questions are updated too.
+   * When a unit or lesson id changes, the items linked to it are updated too.
    */
   function saveItem(library, key, item, originalId) {
     var next = normalizeLibrary(library);
@@ -61,41 +78,46 @@
     } else {
       items[position] = Schema.clone(item);
     }
-    if (key === 'lessons' && originalId && originalId !== item.id) {
-      next.summaries.forEach(function (summary) {
-        if (summary.lessonId === originalId) summary.lessonId = item.id;
-      });
-      next.questions.forEach(function (question) {
-        if (question.topic === originalId) question.topic = item.id;
-      });
+    if (originalId && originalId !== item.id) {
+      if (key === 'units') {
+        eachLinked(next, UNIT_LINKED, 'unitId', originalId, function (linked) { linked.unitId = item.id; });
+      } else if (key === 'lessons') {
+        eachLinked(next, TOPIC_LINKED, 'topicId', originalId, function (linked) { linked.topicId = item.id; });
+      }
     }
     return next;
   }
 
-  /* How many summaries and questions point at a lesson. */
+  /* How many summaries and questions point at a lesson (topic). */
   function countLessonLinks(library, lessonId) {
     return {
-      summaries: (library.summaries || []).filter(function (s) { return s.lessonId === lessonId; }).length,
-      questions: (library.questions || []).filter(function (q) { return q.topic === lessonId; }).length
+      summaries: (library.summaries || []).filter(function (s) { return s && s.topicId === lessonId; }).length,
+      questions: (library.questions || []).filter(function (q) { return q && q.topicId === lessonId; }).length
     };
   }
 
+  /* How many items of each kind name a unit directly with unitId. */
+  function countUnitLinks(library, unitId) {
+    var counts = {};
+    UNIT_LINKED.forEach(function (key) {
+      counts[key] = (library[key] || []).filter(function (item) { return item && item.unitId === unitId; }).length;
+    });
+    return counts;
+  }
+
   /**
-   * Deletes an item. Deleting a lesson keeps its summaries and questions but
-   * removes their link to the deleted lesson.
+   * Deletes an item. Deleting a unit or a lesson keeps the items linked to it
+   * but removes their link.
    */
   function deleteItem(library, key, id) {
     var next = normalizeLibrary(library);
     var position = indexOfId(next[key], id);
     if (position === -1) return next;
     next[key].splice(position, 1);
-    if (key === 'lessons') {
-      next.summaries.forEach(function (summary) {
-        if (summary.lessonId === id) delete summary.lessonId;
-      });
-      next.questions.forEach(function (question) {
-        if (question.topic === id) delete question.topic;
-      });
+    if (key === 'units') {
+      eachLinked(next, UNIT_LINKED, 'unitId', id, function (linked) { delete linked.unitId; });
+    } else if (key === 'lessons') {
+      eachLinked(next, TOPIC_LINKED, 'topicId', id, function (linked) { delete linked.topicId; });
     }
     return next;
   }
@@ -125,7 +147,7 @@
     var summary = {};
     Object.keys(collections).forEach(function (key) {
       if (Schema.COLLECTION_KEYS.indexOf(key) === -1) return;
-      var incoming = Schema.clone(collections[key]) || [];
+      var incoming = Schema.upgradeCollection(key, Schema.clone(collections[key]) || []);
       if (mode === 'replace') {
         summary[key] = { added: incoming.length, updated: 0, removed: next[key].length };
         next[key] = incoming;
@@ -247,6 +269,7 @@
     isEmpty: isEmpty,
     saveItem: saveItem,
     countLessonLinks: countLessonLinks,
+    countUnitLinks: countUnitLinks,
     deleteItem: deleteItem,
     moveItem: moveItem,
     applyImport: applyImport,

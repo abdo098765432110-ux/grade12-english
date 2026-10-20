@@ -1,38 +1,81 @@
-/* Grammar Lessons page: lesson list, or one lesson when ?lesson=<id> is in the URL. */
+/* Grammar Lessons page.
+     grammar.html               all lessons, grouped by unit
+     grammar.html?unit=<id>     the lessons of one unit
+     grammar.html?topic=<id>    one lesson (topic). ?lesson=<id> also works. */
 (function () {
   'use strict';
 
   var G12 = window.G12;
+  var Schema = G12.Schema;
   var el = G12.el;
+  var hasText = Schema.hasText;
   var root = document.getElementById('page-root');
+  var PAGE = 'grammar.html';
 
-  G12.loadContent(['lessons', 'summaries', 'questions']).then(function (content) {
-    var id = G12.param('lesson');
-    if (id) renderLesson(content, id);
-    else renderList(content);
+  G12.loadContent(['units', 'lessons', 'summaries', 'questions']).then(function (content) {
+    var topicId = G12.param('topic') || G12.param('lesson');
+    if (topicId) renderLesson(content, topicId);
+    else renderList(content, G12.param('unit'));
   }).catch(function (error) {
     G12.showError(root, error, { title: 'Grammar Lessons' });
   });
 
+  function lessonHref(lesson) {
+    return PAGE + '?topic=' + encodeURIComponent(lesson.id);
+  }
+
   function questionCount(content, lessonId) {
-    return content.questions.filter(function (q) { return q.topic === lessonId; }).length;
+    return content.questions.filter(function (q) { return q.topicId === lessonId; }).length;
   }
 
   function summaryFor(content, lessonId) {
-    return content.summaries.filter(function (s) { return s.lessonId === lessonId; })[0] || null;
+    return content.summaries.filter(function (s) { return s.topicId === lessonId; })[0] || null;
   }
 
   /* ---------- Lesson list ---------- */
 
-  function renderList(content) {
+  function lessonCards(content, lessons, headingLevel) {
+    return el('ul', { className: 'card-grid' }, lessons.map(function (lesson) {
+      var count = questionCount(content, lesson.id);
+      var href = lessonHref(lesson);
+      return el('li', { className: 'card' }, [
+        el(headingLevel, { dir: 'auto' }, [el('a', { href: href, text: lesson.title })]),
+        hasText(lesson.description) ? el('p', { dir: 'auto', text: lesson.description }) : null,
+        G12.badges(lesson),
+        el('div', { className: 'card-actions' }, [
+          el('a', { className: 'btn', href: href, text: 'Read lesson', 'aria-label': 'Read lesson: ' + lesson.title }),
+          count ? el('a', { href: 'practice.html?topic=' + encodeURIComponent(lesson.id), text: 'Practise (' + G12.plural(count, 'question') + ')' }) : null
+        ])
+      ]);
+    }));
+  }
+
+  /* One unit: heading, description, and its lessons or "no lessons yet". */
+  function unitSection(content, group, headingLevel, linkHeading) {
+    var unit = group.unit;
+    var title = unit ? unit.title : 'Other topics';
+    var headingId = 'unit-' + (unit ? unit.id : 'other');
+    var heading = el(headingLevel, { id: headingId, dir: 'auto' },
+      linkHeading && unit ? [el('a', { href: G12.unitHref(PAGE, unit.id), text: title })] : [title]);
+    var section = el('section', { className: 'unit-section', 'aria-labelledby': headingId }, [heading]);
+    if (unit && hasText(unit.description)) section.appendChild(el('p', { className: 'unit-description', dir: 'auto', text: unit.description }));
+    if (group.items.length) {
+      section.appendChild(lessonCards(content, group.items, headingLevel === 'h2' ? 'h3' : 'h2'));
+    } else {
+      section.appendChild(el('p', { className: 'unit-empty', text: 'No lessons in this unit yet.' }));
+    }
+    return section;
+  }
+
+  function renderList(content, unitId) {
     G12.setTitle('Grammar Lessons');
     G12.clear(root);
     root.appendChild(el('h1', { text: 'Grammar Lessons' }));
     root.appendChild(el('p', { className: 'lead', text: 'Choose a lesson to read the explanation and examples.' }));
-    var skipped = G12.skippedNotice(content.skipped);
+    var skipped = G12.skippedNotice(content, ['units', 'lessons']);
     if (skipped) root.appendChild(skipped);
 
-    if (content.lessons.length === 0) {
+    if (content.lessons.length === 0 && content.units.length === 0) {
       root.appendChild(G12.emptyState(
         'No lessons added yet',
         'Grammar lessons will appear here once they are added in the content manager.',
@@ -41,55 +84,75 @@
       return;
     }
 
-    var notice = G12.listReviewNotice(content.lessons);
-    if (notice) root.appendChild(notice);
+    var nav = G12.unitNav(content.units, unitId, PAGE, G12.countByUnit(content.lessons));
+    if (nav) root.appendChild(nav);
+    var groups = Schema.groupByUnit(content.lessons, content.units, content.lessons);
 
-    var list = el('ul', { className: 'card-grid' });
-    content.lessons.forEach(function (lesson) {
-      var count = questionCount(content, lesson.id);
-      var href = 'grammar.html?lesson=' + encodeURIComponent(lesson.id);
-      list.appendChild(el('li', { className: 'card' }, [
-        el('h2', { dir: 'auto' }, [el('a', { href: href, text: lesson.title })]),
-        G12.Schema.hasText(lesson.description) ? el('p', { dir: 'auto', text: lesson.description }) : null,
-        G12.badges(lesson),
-        el('div', { className: 'card-actions' }, [
-          el('a', { className: 'btn', href: href, text: 'Read lesson', 'aria-label': 'Read lesson: ' + lesson.title }),
-          count ? el('a', { href: 'practice.html?topic=' + encodeURIComponent(lesson.id), text: 'Practise (' + G12.plural(count, 'question') + ')' }) : null
-        ])
-      ]));
+    if (unitId) {
+      var group = groups.filter(function (g) { return g.unit && g.unit.id === unitId; })[0];
+      if (!group) {
+        G12.unitNotFound(root, PAGE, 'lessons');
+        return;
+      }
+      G12.setTitle(group.unit.title + ' — Grammar Lessons');
+      var notice = G12.listReviewNotice(group.items);
+      if (notice) root.appendChild(notice);
+      if (group.items.length === 0) {
+        root.appendChild(el('h2', { dir: 'auto', text: group.unit.title }));
+        root.appendChild(G12.emptyState(
+          'No lessons in this unit yet',
+          'Lessons for this unit will appear here once they are added in the content manager.',
+          [{ label: 'Show all units', href: PAGE }],
+          'h3'
+        ));
+        return;
+      }
+      root.appendChild(unitSection(content, group, 'h2', false));
+      return;
+    }
+
+    var allNotice = G12.listReviewNotice(content.lessons);
+    if (allNotice) root.appendChild(allNotice);
+
+    if (content.units.length === 0) {
+      root.appendChild(lessonCards(content, content.lessons, 'h2'));
+      return;
+    }
+    groups.forEach(function (g) {
+      root.appendChild(unitSection(content, g, 'h2', true));
     });
-    root.appendChild(list);
   }
 
   /* ---------- One lesson ---------- */
 
   function renderLesson(content, id) {
     G12.clear(root);
+    var ordered = Schema.orderByUnit(content.lessons, content.units, content.lessons);
     var index = -1;
-    content.lessons.forEach(function (lesson, i) { if (lesson.id === id) index = i; });
+    ordered.forEach(function (lesson, i) { if (lesson.id === id) index = i; });
 
     if (index === -1) {
       G12.setTitle('Lesson not found');
       root.appendChild(el('h1', { text: 'Lesson not found' }));
       root.appendChild(el('p', { text: 'This lesson does not exist or has been removed.' }));
-      root.appendChild(el('a', { className: 'btn', href: 'grammar.html', text: 'Back to all lessons' }));
+      root.appendChild(el('a', { className: 'btn', href: PAGE, text: 'Back to all lessons' }));
       return;
     }
 
-    var lesson = content.lessons[index];
+    var lesson = ordered[index];
+    var unit = Schema.findById(content.units, lesson.unitId);
     G12.setTitle(lesson.title);
 
-    root.appendChild(el('nav', { className: 'breadcrumb', 'aria-label': 'Breadcrumb' }, [
-      el('ol', null, [
-        el('li', null, [el('a', { href: 'grammar.html', text: 'Grammar Lessons' })]),
-        el('li', null, [el('span', { 'aria-current': 'page', dir: 'auto', text: lesson.title })])
-      ])
-    ]));
+    var crumbs = [el('li', null, [el('a', { href: PAGE, text: 'Grammar Lessons' })])];
+    if (unit) crumbs.push(el('li', null, [el('a', { href: G12.unitHref(PAGE, unit.id), dir: 'auto', text: unit.title })]));
+    crumbs.push(el('li', null, [el('span', { 'aria-current': 'page', dir: 'auto', text: lesson.title })]));
+    root.appendChild(el('nav', { className: 'breadcrumb', 'aria-label': 'Breadcrumb' }, [el('ol', null, crumbs)]));
+
     root.appendChild(el('h1', { dir: 'auto', text: lesson.title }));
-    if (G12.Schema.hasText(lesson.description)) {
+    if (hasText(lesson.description)) {
       root.appendChild(el('p', { className: 'lead', dir: 'auto', text: lesson.description }));
     }
-    root.appendChild(G12.badges(lesson));
+    root.appendChild(G12.badges(lesson, [unit ? unit.title : null]));
     var notice = G12.reviewNotice(lesson, 'lesson');
     if (notice) root.appendChild(notice);
 
@@ -105,7 +168,7 @@
     var summary = summaryFor(content, lesson.id);
     var count = questionCount(content, lesson.id);
     var links = [];
-    if (summary) links.push(el('a', { className: 'btn btn--secondary', href: 'summaries.html#' + encodeURIComponent(summary.id), text: 'Read the summary' }));
+    if (summary) links.push(el('a', { className: 'btn btn--secondary', href: 'summaries.html?topic=' + encodeURIComponent(lesson.id), text: 'Read the summary' }));
     if (count) links.push(el('a', { className: 'btn', href: 'practice.html?topic=' + encodeURIComponent(lesson.id), text: 'Practise this topic (' + G12.plural(count, 'question') + ')' }));
     if (links.length) {
       root.appendChild(el('section', { className: 'next-steps', 'aria-labelledby': 'next-steps-heading' }, [
@@ -114,11 +177,11 @@
       ]));
     }
 
-    var previous = content.lessons[index - 1];
-    var next = content.lessons[index + 1];
+    var previous = ordered[index - 1];
+    var next = ordered[index + 1];
     root.appendChild(el('nav', { className: 'pager', 'aria-label': 'Other lessons' }, [
-      previous ? el('a', { href: 'grammar.html?lesson=' + encodeURIComponent(previous.id), dir: 'auto', text: '← ' + previous.title }) : el('span'),
-      next ? el('a', { href: 'grammar.html?lesson=' + encodeURIComponent(next.id), dir: 'auto', text: next.title + ' →' }) : el('span')
+      previous ? el('a', { href: lessonHref(previous), dir: 'auto', text: '← ' + previous.title }) : el('span'),
+      next ? el('a', { href: lessonHref(next), dir: 'auto', text: next.title + ' →' }) : el('span')
     ]));
   }
 
